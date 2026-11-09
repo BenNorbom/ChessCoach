@@ -78,6 +78,12 @@ def _open_standalone_app_window(url: str) -> bool:
 
 
 def main() -> None:
+    try:
+        from install_shortcut import install_start_menu_shortcut
+        install_start_menu_shortcut()
+    except Exception:
+        pass
+
     port = _free_port()
     server = _start_server(port)
     url = f"http://127.0.0.1:{port}/"

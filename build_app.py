@@ -1,4 +1,4 @@
-"""Build the standalone Windows desktop launcher `ChessCoach.exe`."""
+"""Build the standalone Windows desktop launcher `ChessCoach.exe` with embedded icon."""
 
 from __future__ import annotations
 
@@ -42,12 +42,29 @@ int WINAPI wWinMain(HINSTANCE, HINSTANCE, LPWSTR, int) {
 
 
 def build() -> Path:
+    # Ensure icon exists
+    ico_path = ROOT / "assets" / "icon.ico"
+    if not ico_path.is_file():
+        from create_icon import main as make_icon
+        make_icon()
+
     build_dir = ROOT / "build"
     build_dir.mkdir(exist_ok=True)
     cpp_path = build_dir / "launcher.cpp"
+    rc_path = build_dir / "icon.rc"
+    res_path = build_dir / "icon.res"
     out_exe = ROOT / "ChessCoach.exe"
-    cpp_path.write_text(CPP_LAUNCHER, encoding="utf-8")
 
+    cpp_path.write_text(CPP_LAUNCHER, encoding="utf-8")
+    
+    # Format path with forward slashes for windres
+    ico_forward = str(ico_path.resolve()).replace("\\", "/")
+    rc_path.write_text(f'1 ICON "{ico_forward}"\n', encoding="utf-8")
+
+    # Compile resource
+    subprocess.check_call(["windres", str(rc_path), "-O", "coff", "-o", str(res_path)])
+
+    # Compile launcher
     subprocess.check_call(
         [
             "g++",
@@ -56,11 +73,17 @@ def build() -> Path:
             "-municode",
             "-static",
             str(cpp_path),
+            str(res_path),
             "-o",
             str(out_exe),
         ]
     )
-    print(f"Built native desktop app launcher: {out_exe} ({out_exe.stat().st_size:,} bytes)")
+    print(f"Built native desktop app launcher with embedded icon: {out_exe} ({out_exe.stat().st_size:,} bytes)")
+
+    # Install/update start menu shortcut
+    from install_shortcut import install_start_menu_shortcut
+    install_start_menu_shortcut()
+
     return out_exe
 
 

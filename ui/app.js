@@ -4,12 +4,15 @@ const state = {
   game: null,
   plyIndex: 0,          // 0 = start position, N = position after ply N
   flipped: false,
-  variation: null,      // { label, uciMoves, fens, step }
+  variation: null,      // { label, startFen, uciMoves, moves: [{uci, san, color, fen}], fens, step }
   tpByPly: {},
   chats: {},            // plyIndex -> html of chat messages for that position
+  selectedSquare: null, // e.g. "e2"
+  legalDestinations: [], // array of { to: "e4", isCapture: false, promotion: false }
+  dragSquare: null,     // square of piece being dragged
 };
 
-/* ---------------- FEN helpers ---------------- */
+/* ---------------- FEN and Chess Helpers ---------------- */
 function parseFenBoard(fen) {
   const parts = fen.split(" ");
   const rows = parts[0].split("/");
@@ -24,37 +27,25 @@ function parseFenBoard(fen) {
   return { grid, turn: parts[1] || "w" };
 }
 
-function boardToFen(grid, turn) {
-  const rows = grid.map((row) => {
-    let s = "", empty = 0;
-    for (const p of row) {
-      if (!p) empty++;
-      else { if (empty) { s += empty; empty = 0; } s += p; }
-    }
-    return s + (empty || "");
-  });
-  return `${rows.join("/")} ${turn} - - 0 1`;
+function currentPly() {
+  return state.plyIndex > 0 ? state.game.plies[state.plyIndex - 1] : null;
 }
 
-function sqToRC(sq) {
-  return [8 - parseInt(sq[1], 10), sq.charCodeAt(0) - 97];
+function movePrefix(p) {
+  return p.color === "white" ? `${p.move_number}. ` : `${p.move_number}... `;
 }
 
-function applyUciToFen(fen, uci) {
-  const { grid, turn } = parseFenBoard(fen);
-  const [r1, c1] = sqToRC(uci.slice(0, 2));
-  const [r2, c2] = sqToRC(uci.slice(2, 4));
-  const promo = uci[4] || null;
-  const piece = grid[r1][c1];
-  if (!piece) return fen;
-  if ((piece === "P" || piece === "p") && c1 !== c2 && !grid[r2][c2]) grid[r1][c2] = null; // en passant
-  if ((piece === "K" || piece === "k") && Math.abs(c2 - c1) === 2) {               // castling
-    if (c2 === 6) { grid[r1][5] = grid[r1][7]; grid[r1][7] = null; }
-    else { grid[r1][3] = grid[r1][0]; grid[r1][0] = null; }
+function getCurrentFen() {
+  if (state.variation) {
+    return state.variation.fens[state.variation.step];
   }
-  grid[r1][c1] = null;
-  grid[r2][c2] = promo ? (turn === "w" ? promo.toUpperCase() : promo.toLowerCase()) : piece;
-  return boardToFen(grid, turn === "w" ? "b" : "w");
+  const ply = currentPly();
+  return ply ? ply.fen_after : (state.game ? state.game.initial_fen : "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1");
+}
+
+function getCurrentChess() {
+  const fen = getCurrentFen();
+  return new window.Chess(fen);
 }
 
 /* ---------------- Markdown-lite ---------------- */
@@ -88,7 +79,7 @@ function renderMarkdown(md) {
   return html;
 }
 
-/* ---------------- Board ---------------- */
+/* ---------------- Board & Arrow Rendering ---------------- */
 function sqCenter(sq) {
   const file = sq.charCodeAt(0) - 97;
   const rank = parseInt(sq[1], 10) - 1;
@@ -116,17 +107,12 @@ function drawArrows(arrows) {
   document.getElementById("arrowLayer").innerHTML = defs + body;
 }
 
-function currentPly() {
-  return state.plyIndex > 0 ? state.game.plies[state.plyIndex - 1] : null;
-}
-
-function movePrefix(p) {
-  return p.color === "white" ? `${p.move_number}. ` : `${p.move_number}... `;
-}
-
 function renderBoard() {
   if (!state.game) return;
-  let fen = state.game.initial_fen;
+  const fen = getCurrentFen();
+  const cInst = new window.Chess(fen);
+  const currentTurn = cInst.turn();
+
   const hl = new Set();
   const arrows = [];
   let winProb = 0.5;
@@ -134,24 +120,31 @@ function renderBoard() {
 
   if (state.variation) {
     const v = state.variation;
-    fen = v.fens[v.step];
-    if (v.step > 0) {
-      const last = v.uciMoves[v.step - 1];
-      hl.add(last.slice(0, 2)); hl.add(last.slice(2, 4));
+    if (v.step > 0 && v.moves[v.step - 1]) {
+      const last = v.moves[v.step - 1].uci;
+      hl.add(last.slice(0, 2));
+      hl.add(last.slice(2, 4));
     }
-    if (v.step < v.uciMoves.length) arrows.push({ uci: v.uciMoves[v.step], kind: "line" });
-    document.getElementById("variationBanner").classList.remove("hidden");
-    document.getElementById("varTitle").textContent = v.label;
-    document.getElementById("varStepLabel").textContent = `move ${v.step} of ${v.uciMoves.length}`;
+    // Arrow for next move in the variation
+    if (v.step < v.moves.length) {
+      arrows.push({ uci: v.moves[v.step].uci, kind: "line" });
+    }
   } else {
-    document.getElementById("variationBanner").classList.add("hidden");
     if (ply) {
-      fen = ply.fen_after;
-      hl.add(ply.uci.slice(0, 2)); hl.add(ply.uci.slice(2, 4));
+      hl.add(ply.uci.slice(0, 2));
+      hl.add(ply.uci.slice(2, 4));
       winProb = ply.win_prob_white;
       const tp = state.tpByPly[ply.ply];
-      if (tp) arrows.push({ uci: tp.best_uci, kind: "best" });
+      if (tp) {
+        arrows.push({ uci: tp.best_uci, kind: "best" });
+      }
     }
+  }
+
+  // Destination squares lookup map
+  const destMap = {};
+  for (const d of state.legalDestinations) {
+    destMap[d.to] = d;
   }
 
   const { grid } = parseFenBoard(fen);
@@ -162,28 +155,279 @@ function renderBoard() {
       const c = state.flipped ? 7 - vc : vc;
       const sq = String.fromCharCode(97 + c) + (8 - r);
       const piece = grid[r][c];
-      let inner = piece && PIECE_SVGS[piece] ? PIECE_SVGS[piece] : "";
+      const isSelected = state.selectedSquare === sq;
+      const dest = destMap[sq];
+      const hasFriendlyPiece = piece && ((currentTurn === "w" && piece === piece.toUpperCase()) || (currentTurn === "b" && piece === piece.toLowerCase()));
+
+      let inner = "";
+      if (piece && PIECE_SVGS[piece]) {
+        inner += PIECE_SVGS[piece];
+      }
+      if (dest) {
+        if (dest.isCapture) {
+          inner += `<div class="capture-ring"></div>`;
+        } else {
+          inner += `<div class="move-dot"></div>`;
+        }
+      }
       if (vc === 0) inner += `<span class="coord-rank">${8 - r}</span>`;
       if (vr === 7) inner += `<span class="coord-file">${String.fromCharCode(97 + c)}</span>`;
-      html += `<div class="sq ${(r + c) % 2 === 0 ? "light" : "dark"} ${hl.has(sq) ? "hl" : ""}">${inner}</div>`;
+
+      const classes = [
+        "sq",
+        (r + c) % 2 === 0 ? "light" : "dark",
+        hl.has(sq) ? "hl" : "",
+        isSelected ? "selected" : "",
+        dest ? (dest.isCapture ? "can-dest is-capture" : "can-dest") : "",
+        hasFriendlyPiece ? "has-piece" : ""
+      ].filter(Boolean).join(" ");
+
+      html += `<div class="${classes}" data-sq="${sq}">${inner}</div>`;
     }
   }
-  document.getElementById("boardGrid").innerHTML = html;
+
+  const boardEl = document.getElementById("boardGrid");
+  boardEl.innerHTML = html;
   drawArrows(arrows);
 
+  // Bind square clicks and drag events
+  boardEl.querySelectorAll(".sq").forEach((sqEl) => {
+    const sq = sqEl.dataset.sq;
+    sqEl.onclick = () => onSquareClick(sq);
+
+    // Drag-and-drop
+    sqEl.ondragover = (e) => e.preventDefault();
+    sqEl.ondrop = (e) => onDrop(e, sq);
+
+    const svg = sqEl.querySelector(".piece-svg");
+    if (svg && sqEl.classList.contains("has-piece")) {
+      svg.setAttribute("draggable", "true");
+      svg.ondragstart = (e) => onDragStart(e, sq);
+    }
+  });
+
+  // Top header status
   document.getElementById("thermoFill").style.height = `${Math.round(winProb * 100)}%`;
-  document.getElementById("currentMoveLabel").textContent = ply ? movePrefix(ply) + ply.san : "Start position";
-  document.getElementById("currentEvalLabel").textContent = ply ? ply.eval_white_str : "0.00";
+  if (state.variation) {
+    const v = state.variation;
+    const curMove = v.step > 0 && v.moves[v.step - 1] ? v.moves[v.step - 1].san : "start";
+    document.getElementById("currentMoveLabel").textContent = `${v.label} (${curMove})`;
+    document.getElementById("currentEvalLabel").textContent = "line";
+  } else {
+    document.getElementById("currentMoveLabel").textContent = ply ? movePrefix(ply) + ply.san : "Start position";
+    document.getElementById("currentEvalLabel").textContent = ply ? ply.eval_white_str : "0.00";
+  }
 }
 
-/* ---------------- Notes (only for the current move) ---------------- */
+/* ---------------- Piece Movement & Interaction ---------------- */
+function onSquareClick(sq) {
+  const c = getCurrentChess();
+  
+  // If a square is already selected and clicked square is a destination:
+  const dest = state.legalDestinations.find((d) => d.to === sq);
+  if (state.selectedSquare && dest) {
+    makeUserMove(state.selectedSquare, sq, dest.promotion ? "q" : undefined);
+    return;
+  }
+  
+  // If clicked square has a piece belonging to the side to move:
+  const piece = c.get(sq);
+  if (piece && piece.color === c.turn()) {
+    state.selectedSquare = sq;
+    const verboseMoves = c.moves({ square: sq, verbose: true });
+    state.legalDestinations = verboseMoves.map((m) => ({
+      to: m.to,
+      isCapture: Boolean(m.captured || m.flags.includes("c") || m.flags.includes("e")),
+      promotion: Boolean(m.promotion || m.flags.includes("p"))
+    }));
+    renderBoard();
+    return;
+  }
+  
+  // Clicking anywhere else deselects
+  if (state.selectedSquare) {
+    state.selectedSquare = null;
+    state.legalDestinations = [];
+    renderBoard();
+  }
+}
+
+function onDragStart(e, sq) {
+  const c = getCurrentChess();
+  const piece = c.get(sq);
+  if (!piece || piece.color !== c.turn()) {
+    e.preventDefault();
+    return;
+  }
+  state.selectedSquare = sq;
+  state.dragSquare = sq;
+  const verboseMoves = c.moves({ square: sq, verbose: true });
+  state.legalDestinations = verboseMoves.map((m) => ({
+    to: m.to,
+    isCapture: Boolean(m.captured || m.flags.includes("c") || m.flags.includes("e")),
+    promotion: Boolean(m.promotion || m.flags.includes("p"))
+  }));
+  renderBoard();
+  e.dataTransfer.setData("text/plain", sq);
+  e.dataTransfer.effectAllowed = "move";
+}
+
+function onDrop(e, sq) {
+  e.preventDefault();
+  const from = state.dragSquare || state.selectedSquare;
+  state.dragSquare = null;
+  if (!from) return;
+  const dest = state.legalDestinations.find((d) => d.to === sq);
+  if (dest) {
+    makeUserMove(from, sq, dest.promotion ? "q" : undefined);
+  } else {
+    state.selectedSquare = null;
+    state.legalDestinations = [];
+    renderBoard();
+  }
+}
+
+function makeUserMove(from, to, promotion = "q") {
+  const currentFen = getCurrentFen();
+  const c = new window.Chess(currentFen);
+  const m = c.move({ from, to, promotion });
+  if (!m) return;
+  
+  const uci = m.from + m.to + (m.promotion || "");
+  
+  if (state.variation) {
+    const v = state.variation;
+    if (v.step < v.moves.length && v.moves[v.step].uci === uci) {
+      v.step += 1;
+    } else {
+      v.moves = v.moves.slice(0, v.step);
+      v.fens = v.fens.slice(0, v.step + 1);
+      v.moves.push({
+        uci,
+        san: m.san,
+        color: m.color,
+        fen: c.fen()
+      });
+      v.fens.push(c.fen());
+      v.uciMoves = v.moves.map((x) => x.uci);
+      v.step = v.moves.length;
+    }
+  } else {
+    const ply = currentPly();
+    const label = ply ? `What-if from ${movePrefix(ply)}${ply.san}` : "What-if from start";
+    state.variation = {
+      label,
+      startFen: currentFen,
+      uciMoves: [uci],
+      moves: [{
+        uci,
+        san: m.san,
+        color: m.color,
+        fen: c.fen()
+      }],
+      fens: [currentFen, c.fen()],
+      step: 1
+    };
+  }
+  
+  state.selectedSquare = null;
+  state.legalDestinations = [];
+  renderBoard();
+  renderVariationBanner();
+}
+
+/* ---------------- Variation System ---------------- */
+function startVariation(label, startFen, uciMoves, startStep = null) {
+  const c = new window.Chess(startFen);
+  const moves = [];
+  const fens = [startFen];
+  for (const u of uciMoves) {
+    const from = u.slice(0, 2);
+    const to = u.slice(2, 4);
+    const piece = c.get(from);
+    const promo = u[4] || (piece && piece.type === "p" && (to[1] === "8" || to[1] === "1") ? "q" : undefined);
+    const m = c.move({ from, to, promotion: promo });
+    if (!m) break;
+    moves.push({
+      uci: m.from + m.to + (m.promotion || ""),
+      san: m.san,
+      color: m.color,
+      fen: c.fen()
+    });
+    fens.push(c.fen());
+  }
+  const step = startStep !== null ? Math.max(0, Math.min(moves.length, startStep)) : Math.min(1, moves.length);
+  state.variation = {
+    label,
+    startFen,
+    uciMoves: moves.map((m) => m.uci),
+    moves,
+    fens,
+    step
+  };
+  state.selectedSquare = null;
+  state.legalDestinations = [];
+  renderBoard();
+  renderVariationBanner();
+}
+
+function stepVariation(delta) {
+  if (!state.variation) return;
+  const v = state.variation;
+  v.step = Math.max(0, Math.min(v.moves.length, v.step + delta));
+  state.selectedSquare = null;
+  state.legalDestinations = [];
+  renderBoard();
+  renderVariationBanner();
+}
+
+function jumpVariationStep(step) {
+  if (!state.variation) return;
+  const v = state.variation;
+  v.step = Math.max(0, Math.min(v.moves.length, step));
+  state.selectedSquare = null;
+  state.legalDestinations = [];
+  renderBoard();
+  renderVariationBanner();
+}
+
+function exitVariation() {
+  state.variation = null;
+  state.selectedSquare = null;
+  state.legalDestinations = [];
+  renderBoard();
+  document.getElementById("variationBanner").classList.add("hidden");
+}
+
+function renderVariationBanner() {
+  const banner = document.getElementById("variationBanner");
+  if (!state.variation) {
+    banner.classList.add("hidden");
+    return;
+  }
+  banner.classList.remove("hidden");
+  const v = state.variation;
+  document.getElementById("varTitle").textContent = v.label;
+  document.getElementById("varStepLabel").textContent = `(${v.step} / ${v.moves.length} moves)`;
+
+  const strip = document.getElementById("varMoveStrip");
+  if (!strip) return;
+
+  let html = `<span class="var-chip ${v.step === 0 ? "active" : ""}" data-step="0" title="Start of line">&#9679; Start</span>`;
+  v.moves.forEach((m, idx) => {
+    const isAct = v.step === (idx + 1);
+    html += `<span class="var-chip ${isAct ? "active" : ""}" data-step="${idx + 1}">${esc(m.san)}</span>`;
+  });
+  strip.innerHTML = html;
+  strip.querySelectorAll(".var-chip").forEach((chip) => {
+    chip.onclick = () => jumpVariationStep(parseInt(chip.dataset.step, 10));
+  });
+}
+
+/* ---------------- Notes Rendering ---------------- */
 function splitOnce(text, marker) {
   const i = (text || "").indexOf(marker);
   return i < 0 ? [text || "", ""] : [text.slice(0, i).trim(), text.slice(i).trim()];
-}
-
-function lineButton(label, fen, uciMoves) {
-  return `<button class="btn-var" data-fen="${esc(fen)}" data-uci='${JSON.stringify(uciMoves)}' data-label="${esc(label)}">▶ ${esc(label)}</button>`;
 }
 
 function whiteBoxDetails(wb) {
@@ -212,38 +456,72 @@ function renderTurningPointNote(ply, tp) {
 
   const refUci = [tp.played_uci, ...(tp.refutation_pv_uci || []).slice(0, 6)];
   const bestUci = (tp.candidates[0]?.pv_uci || []).slice(0, 7);
-  const cfBtns = (tp.counterfactual_replies_to_best || []).map((cf) =>
-    lineButton(`If ${cf.opponent_try_san} after ${tp.best_san}`, tp.fen_before, [tp.best_uci, cf.opponent_try_uci, ...(cf.continuation_uci || [])])
-  ).join("");
+  const bestSanPv = tp.candidates[0]?.pv_formatted || tp.best_san;
+  const refSanPv = tp.refutation_pv_formatted || tp.played_san;
+
+  const cfCards = (tp.counterfactual_replies_to_best || []).map((cf) => {
+    const fullUci = [tp.best_uci, cf.opponent_try_uci, ...(cf.continuation_uci || [])];
+    const preview = cf.continuation_formatted || `${cf.opponent_try_san} ${cf.refutation_san}!`;
+    return `
+      <div class="line-box">
+        <div class="line-box-info">
+          <div class="line-box-title">If ${esc(cf.opponent_try_san)} &rarr; ${esc(cf.refutation_san)}!</div>
+          <div class="line-box-preview">${esc(preview)}</div>
+        </div>
+        <button class="btn-play-line counterfactual" data-fen="${esc(tp.fen_before)}" data-uci='${JSON.stringify(fullUci)}' data-label="If ${esc(cf.opponent_try_san)} vs ${esc(tp.best_san)}">
+          &#9654; Play on board
+        </button>
+      </div>`;
+  }).join("");
 
   return {
     cls: `tp-${tp.severity}`,
     html: `
       <h2><span class="verdict ${tp.severity}">${tp.severity.toUpperCase()}</span>${esc(movePrefix(ply) + ply.san)}</h2>
-      <div class="sub">Better was <code>${esc(tp.best_san)}</code> (${esc(tp.best_eval_white_str)} instead of ${esc(tp.played_eval_white_str)}) · ${esc(tp.root_cause_title)}</div>
+      <div class="sub">Better was <code>${esc(tp.best_san)}</code> (${esc(tp.best_eval_white_str)} instead of ${esc(tp.played_eval_white_str)}) &middot; ${esc(tp.root_cause_title)}</div>
+
+      <div style="margin: 8px 0 12px; display: flex; gap: 8px; flex-wrap: wrap;">
+        <button class="btn btn-sm btn-play-line" data-fen="${esc(tp.fen_before)}" data-uci='[]' data-label="Decision before ${esc(ply.san)}">
+          &#8630; Reset to before ${esc(ply.san)} (Try your moves)
+        </button>
+      </div>
 
       <h4>What you were going for</h4>
       <p>${inlineMd(c.your_likely_intent)}</p>
 
       <h4>What went wrong</h4>
       <p>${inlineMd(problem)}</p>
+      <div class="line-box">
+        <div class="line-box-info">
+          <div class="line-box-title">The Refutation Line</div>
+          <div class="line-box-preview">${esc(refSanPv)}</div>
+        </div>
+        <button class="btn-play-line refutation" data-fen="${esc(tp.fen_before)}" data-uci='${JSON.stringify(refUci)}' data-label="Refutation of ${esc(ply.san)}">
+          &#9654; Play on board
+        </button>
+      </div>
 
       <h4>Why ${esc(tp.best_san)} is better</h4>
       <p>${inlineMd(betterMain)}</p>
-      ${doubt ? `<h4>"But what if they…"</h4><p>${inlineMd(doubt.charAt(0).toUpperCase() + doubt.slice(1))}</p>` : ""}
-
-      <div class="takeaway"><strong>Take-away for future games:</strong> when ${esc(c.otb_trigger.signal.charAt(0).toLowerCase() + c.otb_trigger.signal.slice(1))} → ${esc(c.otb_trigger.action)}</div>
-
-      <div class="line-btns">
-        ${lineButton(`Best line: ${tp.best_san}`, tp.fen_before, bestUci)}
-        ${lineButton(`Why ${ply.san} fails`, tp.fen_before, refUci)}
-        ${cfBtns}
+      <div class="line-box">
+        <div class="line-box-info">
+          <div class="line-box-title">Recommended Best Line</div>
+          <div class="line-box-preview">${esc(bestSanPv)}</div>
+        </div>
+        <button class="btn-play-line" data-fen="${esc(tp.fen_before)}" data-uci='${JSON.stringify(bestUci)}' data-label="Best Line: ${esc(tp.best_san)}">
+          &#9654; Play on board
+        </button>
       </div>
 
-      <details class="more"><summary>Engine details</summary><div class="more-body">
+      ${doubt ? `<h4>"But what if they…"</h4><p>${inlineMd(doubt.charAt(0).toUpperCase() + doubt.slice(1))}</p>` : ""}
+      ${cfCards}
+
+      <div class="takeaway"><strong>Take-away for future games:</strong> when ${esc(c.otb_trigger.signal.charAt(0).toLowerCase() + c.otb_trigger.signal.slice(1))} &rarr; ${esc(c.otb_trigger.action)}</div>
+
+      <details class="more"><summary>Engine & Positional details</summary><div class="more-body">
         ${problemStructure ? `<p>${inlineMd(problemStructure)}</p>` : ""}
         ${betterStructure ? `<p>${inlineMd(betterStructure)}</p>` : ""}
-        <p>Win-chance lost: ${(tp.wp_loss * 100).toFixed(1)}% · Refutation appears at depth ${tp.depth_curve.crossover_depth} · ${esc(tp.singularity.replace(/_/g, " ").toLowerCase())} · threat probe: ${esc(tp.null_threat.threat_diagnosis.replace(/_/g, " ").toLowerCase())}</p>
+        <p class="small muted">Win-chance lost: ${(tp.wp_loss * 100).toFixed(1)}% &middot; Refutation appears at depth ${tp.depth_curve.crossover_depth} &middot; ${esc(tp.singularity.replace(/_/g, " ").toLowerCase())} &middot; Threat: ${esc(tp.null_threat.threat_diagnosis.replace(/_/g, " ").toLowerCase())}</p>
       </div></details>
       ${whiteBoxDetails(tp.whitebox.root)}
     `,
@@ -254,7 +532,7 @@ function renderOrdinaryNote(ply) {
   const mine = ply.color === state.game.player_color;
   let verdict;
   if (!mine) {
-    verdict = `<div class="sub">Opponent's move · eval ${esc(ply.eval_white_str)}</div>`;
+    verdict = `<div class="sub">Opponent's move &middot; eval ${esc(ply.eval_white_str)}</div>`;
   } else if (ply.san === ply.best_before_san || ply.severity === "best") {
     verdict = `<p><span class="verdict good">BEST</span>The engine's top choice.</p>`;
   } else if (ply.severity === "good") {
@@ -281,7 +559,7 @@ function renderSummaryNote() {
     }).join(", ");
     return `<div class="habit"><div class="habit-title">${esc(h.title)}</div>
       <div class="small">${links}</div>
-      <div class="small" style="margin-top:4px"><strong>When</strong> ${esc(h.otb_signal.charAt(0).toLowerCase() + h.otb_signal.slice(1))} <strong>→</strong> ${esc(h.otb_action)}</div></div>`;
+      <div class="small" style="margin-top:4px"><strong>When</strong> ${esc(h.otb_signal.charAt(0).toLowerCase() + h.otb_signal.slice(1))} <strong>&rarr;</strong> ${esc(h.otb_action)}</div></div>`;
   }).join("");
   return {
     cls: "",
@@ -294,7 +572,7 @@ function renderSummaryNote() {
       </div>
       <h4>Habits to work on</h4>
       ${habits || "<p>No recurring issues found.</p>"}
-      <p class="muted small" style="margin-top:12px">Use ▶ / → to step through the game. Coloured dots in the move list mark the key moments; a note appears when you reach one.</p>`,
+      <p class="muted small" style="margin-top:12px">Use &#9654; / &rarr; to step through the game, or pick up any piece on the board to test moves! Coloured dots in the move list mark key moments.</p>`,
   };
 }
 
@@ -313,16 +591,12 @@ function renderNote() {
 }
 
 function bindLineButtons(root) {
-  root.querySelectorAll(".btn-var").forEach((b) => {
-    b.onclick = () => startVariation(b.dataset.label, b.dataset.fen, JSON.parse(b.dataset.uci || "[]"));
+  root.querySelectorAll(".btn-play-line, .btn-var").forEach((b) => {
+    b.onclick = () => {
+      const uciMoves = JSON.parse(b.dataset.uci || "[]");
+      startVariation(b.dataset.label, b.dataset.fen, uciMoves, uciMoves.length > 0 ? 1 : 0);
+    };
   });
-}
-
-function startVariation(label, startFen, uciMoves) {
-  const fens = [startFen];
-  for (const u of uciMoves) fens.push(applyUciToFen(fens[fens.length - 1], u));
-  state.variation = { label, uciMoves, fens, step: Math.min(1, uciMoves.length) };
-  renderBoard();
 }
 
 /* ---------------- Move list & graph ---------------- */
@@ -374,12 +648,12 @@ function renderEvalGraph() {
 
 function moveGraphCursor() {
   const cur = document.getElementById("graphCursor");
-  if (!cur) return;
+  if (!cur || !state.game) return;
   const x = ((state.plyIndex / (state.game.plies.length || 1)) * 600).toFixed(1);
   cur.setAttribute("x1", x); cur.setAttribute("x2", x);
 }
 
-/* ---------------- Q&A (scoped per move) ---------------- */
+/* ---------------- Q&A ---------------- */
 function saveChat() {
   state.chats[state.plyIndex] = document.getElementById("qaMessages").innerHTML;
 }
@@ -416,13 +690,15 @@ async function askCoach(question) {
   msgs.insertAdjacentHTML("beforeend", `<div class="qa-msg user"><div class="qa-bubble">${esc(question)}</div></div>`);
   const id = `a${Date.now()}`;
   msgs.insertAdjacentHTML("beforeend", `<div class="qa-msg" id="${id}"><div class="qa-bubble"><em>Thinking…</em></div></div>`);
-  document.getElementById(id).scrollIntoView({ block: "nearest" });
+  const loadingEl = document.getElementById(id);
+  if (loadingEl) loadingEl.scrollIntoView({ block: "nearest" });
   saveChat();
 
   const ply = currentPly();
-  let fenCurrent = state.game.initial_fen, fenBefore = null;
-  if (state.variation) fenCurrent = state.variation.fens[state.variation.step];
-  else if (ply) { fenCurrent = ply.fen_after; fenBefore = ply.fen_before; }
+  let fenCurrent = getCurrentFen(), fenBefore = null;
+  if (!state.variation && ply) {
+    fenBefore = ply.fen_before;
+  }
 
   let answerHtml;
   try {
@@ -430,13 +706,19 @@ async function askCoach(question) {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        question, fen_current: fenCurrent, fen_before: fenBefore,
-        ply_meta: state.variation ? null : ply, perspective: state.game.player_color || "white",
+        question,
+        fen_current: fenCurrent,
+        fen_before: fenBefore,
+        ply_meta: state.variation ? null : ply,
+        perspective: state.game.player_color || "white",
       }),
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || "Request failed");
-    const btns = (data.interactive_lines || []).map((l) => lineButton(l.label, l.fen, l.uci_moves)).join("");
+    const btns = (data.interactive_lines || []).map((l) => `
+      <button class="btn-play-line" data-fen="${esc(l.fen)}" data-uci='${JSON.stringify(l.uci_moves)}' data-label="${esc(l.label)}">
+        &#9654; ${esc(l.label)}
+      </button>`).join("");
     answerHtml = `<div class="qa-bubble">${renderMarkdown(data.answer_markdown)}${btns ? `<div class="line-btns">${btns}</div>` : ""}</div>`;
   } catch (err) {
     answerHtml = `<div class="qa-bubble">Sorry — ${esc(err.message)}</div>`;
@@ -447,7 +729,6 @@ async function askCoach(question) {
     if (el) { el.innerHTML = answerHtml; bindLineButtons(el); el.scrollIntoView({ block: "nearest" }); }
     saveChat();
   } else {
-    // User moved on; store the answer in that move's chat history.
     const tmp = document.createElement("div");
     tmp.innerHTML = state.chats[askedAt] || "";
     const el = tmp.querySelector(`#${id}`);
@@ -460,7 +741,7 @@ async function askCoach(question) {
 function jumpToPly(ply) {
   if (!state.game) return;
   saveChat();
-  state.variation = null;
+  exitVariation();
   state.plyIndex = Math.max(0, Math.min(state.game.plies.length, ply));
   renderAll();
 }
@@ -469,17 +750,12 @@ function renderAll() {
   renderBoard();
   renderNote();
   renderQA();
+  renderVariationBanner();
   highlightMoveList();
   moveGraphCursor();
 }
 
-function stepVariation(delta) {
-  const v = state.variation;
-  v.step = Math.max(0, Math.min(v.uciMoves.length, v.step + delta));
-  renderBoard();
-}
-
-/* ---------------- Data loading ---------------- */
+/* ---------------- Data Loading ---------------- */
 async function loadGameList(selectId = null) {
   const data = await (await fetch("/api/games")).json();
   const sel = document.getElementById("gameSelect");
@@ -498,6 +774,8 @@ async function loadGame(id) {
   state.game = await resp.json();
   state.plyIndex = 0;
   state.variation = null;
+  state.selectedSquare = null;
+  state.legalDestinations = [];
   state.chats = {};
   state.flipped = state.game.player_color === "black";
   state.tpByPly = {};
@@ -528,7 +806,7 @@ async function pollEngineStatus() {
   setTimeout(pollEngineStatus, 1500);
 }
 
-/* ---------------- Wiring ---------------- */
+/* ---------------- Event Wiring ---------------- */
 window.addEventListener("DOMContentLoaded", async () => {
   pollEngineStatus();
   await refreshSettings();
@@ -538,22 +816,49 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("gameSelect").onchange = (e) => loadGame(e.target.value);
   $("btnFirst").onclick = () => jumpToPly(0);
   $("btnLast").onclick = () => jumpToPly(state.game ? state.game.plies.length : 0);
-  $("btnPrev").onclick = () => (state.variation ? stepVariation(-1) : jumpToPly(state.plyIndex - 1));
-  $("btnNext").onclick = () => (state.variation ? stepVariation(1) : jumpToPly(state.plyIndex + 1));
+  
+  $("btnPrev").onclick = () => {
+    if (state.variation) stepVariation(-1);
+    else jumpToPly(state.plyIndex - 1);
+  };
+  
+  $("btnNext").onclick = () => {
+    if (state.variation) stepVariation(1);
+    else jumpToPly(state.plyIndex + 1);
+  };
+  
   $("btnFlip").onclick = () => { state.flipped = !state.flipped; renderBoard(); };
   $("btnVarPrev").onclick = () => stepVariation(-1);
   $("btnVarNext").onclick = () => stepVariation(1);
-  $("btnVarExit").onclick = () => { state.variation = null; renderBoard(); };
+  $("btnVarExit").onclick = () => exitVariation();
 
   window.addEventListener("keydown", (e) => {
     if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
-    if (e.key === "ArrowLeft") $("btnPrev").click();
-    else if (e.key === "ArrowRight") $("btnNext").click();
-    else if (e.key === "Home") $("btnFirst").click();
-    else if (e.key === "End") $("btnLast").click();
-    else if (e.key === "Escape" && state.variation) $("btnVarExit").click();
-    else return;
-    e.preventDefault();
+    if (e.key === "ArrowLeft") {
+      if (state.variation) stepVariation(-1);
+      else $("btnPrev").click();
+      e.preventDefault();
+    } else if (e.key === "ArrowRight") {
+      if (state.variation) stepVariation(1);
+      else $("btnNext").click();
+      e.preventDefault();
+    } else if (e.key === "Home") {
+      jumpToPly(0);
+      e.preventDefault();
+    } else if (e.key === "End") {
+      jumpToPly(state.game ? state.game.plies.length : 0);
+      e.preventDefault();
+    } else if (e.key === "Escape") {
+      if (state.variation) {
+        exitVariation();
+        e.preventDefault();
+      } else if (state.selectedSquare) {
+        state.selectedSquare = null;
+        state.legalDestinations = [];
+        renderBoard();
+        e.preventDefault();
+      }
+    }
   });
 
   $("qaForm").onsubmit = (e) => { e.preventDefault(); askCoach($("qaInput").value); };

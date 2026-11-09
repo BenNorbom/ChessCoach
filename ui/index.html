@@ -4,15 +4,16 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ChessCoach</title>
+  <link rel="icon" type="image/png" href="/static/../assets/icon.png" />
   <link rel="stylesheet" href="/static/styles.css" />
 </head>
 <body>
   <header class="topbar">
-    <div class="brand"><span class="brand-icon">♞</span> ChessCoach</div>
+    <div class="brand"><span class="brand-icon">&#9816;</span> ChessCoach</div>
     <div class="topbar-actions">
       <select id="gameSelect" class="game-select" title="Select game"></select>
       <button id="btnNewGame" class="btn btn-primary">+ Analyze Game</button>
-      <button id="btnSettings" class="btn btn-ghost" title="AI settings">⚙</button>
+      <button id="btnSettings" class="btn btn-ghost" title="AI settings">&#9881;</button>
     </div>
   </header>
 
@@ -22,12 +23,15 @@
     <!-- BOARD COLUMN -->
     <section class="board-col">
       <div id="variationBanner" class="variation-banner hidden">
-        <span><span class="var-pill">LINE</span> <strong id="varTitle"></strong> <span id="varStepLabel" class="muted"></span></span>
-        <span class="var-controls">
-          <button id="btnVarPrev" class="btn btn-xs">◀</button>
-          <button id="btnVarNext" class="btn btn-xs">▶</button>
-          <button id="btnVarExit" class="btn btn-xs">✕ Back to game</button>
-        </span>
+        <div class="var-top">
+          <span><span class="var-pill">EXPLORING LINE</span> <strong id="varTitle"></strong> <span id="varStepLabel" class="muted"></span></span>
+          <span class="var-controls">
+            <button id="btnVarPrev" class="btn btn-xs" title="Previous move (Left Arrow)">&#9664; Prev</button>
+            <button id="btnVarNext" class="btn btn-xs" title="Next move (Right Arrow)">Next &#9654;</button>
+            <button id="btnVarExit" class="btn btn-xs btn-danger-soft" title="Exit line (Esc)">&#10005; Back to game</button>
+          </span>
+        </div>
+        <div id="varMoveStrip" class="var-movelist"></div>
       </div>
 
       <div class="board-row">
@@ -41,11 +45,11 @@
       </div>
 
       <div class="board-controls">
-        <button id="btnFirst" class="btn btn-icon" title="Start (Home)">⏮</button>
-        <button id="btnPrev" class="btn btn-icon" title="Previous (←)">◀</button>
-        <button id="btnNext" class="btn btn-icon" title="Next (→)">▶</button>
-        <button id="btnLast" class="btn btn-icon" title="End (End)">⏭</button>
-        <button id="btnFlip" class="btn btn-icon" title="Flip board">⇅</button>
+        <button id="btnFirst" class="btn btn-icon" title="Start (Home)">&#9198;</button>
+        <button id="btnPrev" class="btn btn-icon" title="Previous (Left Arrow)">&#9664;</button>
+        <button id="btnNext" class="btn btn-icon" title="Next (Right Arrow)">&#9654;</button>
+        <button id="btnLast" class="btn btn-icon" title="End (End)">&#9197;</button>
+        <button id="btnFlip" class="btn btn-icon" title="Flip board">&#8645;</button>
       </div>
 
       <svg id="evalGraph" class="eval-graph" viewBox="0 0 600 60" preserveAspectRatio="none"></svg>
@@ -82,7 +86,7 @@
     <div class="modal">
       <div class="modal-header">
         <h2>Analyze a game</h2>
-        <button class="btn-close" data-close="modalNewGame">✕</button>
+        <button class="btn-close" data-close="modalNewGame">&#10005;</button>
       </div>
       <div class="modal-body">
         <label class="field-label">Title (optional)</label>
@@ -109,7 +113,7 @@
     <div class="modal">
       <div class="modal-header">
         <h2>Coach settings</h2>
-        <button class="btn-close" data-close="modalSettings">✕</button>
+        <button class="btn-close" data-close="modalSettings">&#10005;</button>
       </div>
       <div class="modal-body">
         <p class="muted small">
@@ -139,6 +143,7 @@
   </div>
 
   <script src="/static/pieces.js"></script>
+  <script src="/static/chess.min.js"></script>
   <script src="/static/app.js"></script>
 </body>
 </html>
