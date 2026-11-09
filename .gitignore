@@ -1,0 +1,9 @@
+bin/
+build/
+dist/
+__pycache__/
+*.pyc
+.pytest_cache/
+.env
+data/cache/
+data/llm_settings.json

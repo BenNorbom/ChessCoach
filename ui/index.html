@@ -1,0 +1,144 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ChessCoach</title>
+  <link rel="stylesheet" href="/static/styles.css" />
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand"><span class="brand-icon">♞</span> ChessCoach</div>
+    <div class="topbar-actions">
+      <select id="gameSelect" class="game-select" title="Select game"></select>
+      <button id="btnNewGame" class="btn btn-primary">+ Analyze Game</button>
+      <button id="btnSettings" class="btn btn-ghost" title="AI settings">⚙</button>
+    </div>
+  </header>
+
+  <div id="engineBanner" class="engine-banner hidden"></div>
+
+  <main class="workspace">
+    <!-- BOARD COLUMN -->
+    <section class="board-col">
+      <div id="variationBanner" class="variation-banner hidden">
+        <span><span class="var-pill">LINE</span> <strong id="varTitle"></strong> <span id="varStepLabel" class="muted"></span></span>
+        <span class="var-controls">
+          <button id="btnVarPrev" class="btn btn-xs">◀</button>
+          <button id="btnVarNext" class="btn btn-xs">▶</button>
+          <button id="btnVarExit" class="btn btn-xs">✕ Back to game</button>
+        </span>
+      </div>
+
+      <div class="board-row">
+        <div class="eval-thermo" title="Evaluation (White's win chance)">
+          <div id="thermoFill" class="thermo-fill" style="height: 50%"></div>
+        </div>
+        <div class="board-wrapper">
+          <div id="boardGrid" class="board-grid"></div>
+          <svg id="arrowLayer" class="arrow-layer" viewBox="0 0 800 800" preserveAspectRatio="none"></svg>
+        </div>
+      </div>
+
+      <div class="board-controls">
+        <button id="btnFirst" class="btn btn-icon" title="Start (Home)">⏮</button>
+        <button id="btnPrev" class="btn btn-icon" title="Previous (←)">◀</button>
+        <button id="btnNext" class="btn btn-icon" title="Next (→)">▶</button>
+        <button id="btnLast" class="btn btn-icon" title="End (End)">⏭</button>
+        <button id="btnFlip" class="btn btn-icon" title="Flip board">⇅</button>
+      </div>
+
+      <svg id="evalGraph" class="eval-graph" viewBox="0 0 600 60" preserveAspectRatio="none"></svg>
+    </section>
+
+    <!-- SIDE PANEL -->
+    <section class="side-col">
+      <div class="move-header">
+        <span id="currentMoveLabel" class="move-title">Start position</span>
+        <span id="currentEvalLabel" class="eval-pill">0.00</span>
+      </div>
+
+      <div id="moveList" class="move-list"></div>
+
+      <div class="note-scroll">
+        <div id="noteContent" class="note"></div>
+
+        <div class="ask-section">
+          <div class="ask-title">Ask the coach about this position</div>
+          <div id="qaSuggestions" class="qa-suggestions"></div>
+          <div id="qaMessages" class="qa-messages"></div>
+        </div>
+      </div>
+
+      <form id="qaForm" class="qa-input-row">
+        <input id="qaInput" type="text" placeholder="e.g. What if I played f4 instead?" autocomplete="off" />
+        <button id="btnAsk" type="submit" class="btn btn-primary">Ask</button>
+      </form>
+    </section>
+  </main>
+
+  <!-- MODAL: ANALYZE NEW PGN -->
+  <div id="modalNewGame" class="modal-backdrop hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Analyze a game</h2>
+        <button class="btn-close" data-close="modalNewGame">✕</button>
+      </div>
+      <div class="modal-body">
+        <label class="field-label">Title (optional)</label>
+        <input id="inputTitle" type="text" class="text-input" placeholder="e.g. Club Championship R3" />
+        <label class="field-label">You played</label>
+        <div class="radio-row">
+          <label><input type="radio" name="playerColor" value="white" checked /> White</label>
+          <label><input type="radio" name="playerColor" value="black" /> Black</label>
+        </div>
+        <label class="field-label">PGN file or text</label>
+        <input id="filePgn" type="file" accept=".pgn,.txt" class="file-input" />
+        <textarea id="inputPgn" rows="8" class="textarea-input" placeholder="1. e4 c6 2. d4 d5 ..."></textarea>
+        <div id="analyzeStatus" class="status-note hidden">Analyzing… this takes about a minute.</div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close="modalNewGame">Cancel</button>
+        <button id="btnRunAnalyze" class="btn btn-primary">Analyze</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MODAL: AI SETTINGS -->
+  <div id="modalSettings" class="modal-backdrop hidden">
+    <div class="modal">
+      <div class="modal-header">
+        <h2>Coach settings</h2>
+        <button class="btn-close" data-close="modalSettings">✕</button>
+      </div>
+      <div class="modal-body">
+        <p class="muted small">
+          The coach works fully offline. Optionally connect an AI provider for more conversational answers
+          (it's restricted to the engine's verified lines, so it can't invent moves).
+        </p>
+        <label class="field-label">Provider</label>
+        <select id="selProvider" class="text-input">
+          <option value="deterministic">Built-in coach (offline, free)</option>
+          <option value="gemini">Google Gemini</option>
+          <option value="openai">OpenAI / compatible</option>
+          <option value="anthropic">Anthropic Claude</option>
+          <option value="ollama">Local Ollama</option>
+        </select>
+        <label class="field-label">API key</label>
+        <input id="inputApiKey" type="password" class="text-input" placeholder="Not needed for built-in or Ollama" />
+        <label class="field-label">Model (optional)</label>
+        <input id="inputModel" type="text" class="text-input" placeholder="e.g. gemini-2.5-flash" />
+        <label class="field-label">Base URL (optional)</label>
+        <input id="inputBaseUrl" type="text" class="text-input" placeholder="Leave blank for default" />
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-ghost" data-close="modalSettings">Cancel</button>
+        <button id="btnSaveSettings" class="btn btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/pieces.js"></script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

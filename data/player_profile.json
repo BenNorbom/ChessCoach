@@ -1,0 +1,31 @@
+{
+  "games_analyzed": 1,
+  "average_accuracy": 89.1,
+  "last_updated": "2026-11-09T19:10:51.569941+00:00",
+  "habit_totals": {
+    "PASSIVE_PROPHYLAXIS_MISSED_LEVER": {
+      "title": "Passive Prophylaxis Over Active Pawn Levers",
+      "count": 1,
+      "otb_signal": "Opponent pushes wing pawns aggressively (e.g., ...g5) with an uncastled king, or prepares to trade off your strongest central piece.",
+      "otb_action": "Before touching your king or making a quiet retreat, calculate every immediate pawn lever (h4, f4, c4) and forcing piece challenge first."
+    },
+    "PIECE_QUALITY_NEGLECT": {
+      "title": "Leaving Restricted Minor Pieces Unimproved",
+      "count": 1,
+      "otb_signal": "One of your minor pieces is hemmed in by your own central pawn chain.",
+      "otb_action": "Look for a 2-step reroute (e.g., Ba3-d6) to trade off or activate your worst piece before initiating wing contact."
+    },
+    "RECAPTURE_AVOIDANCE_CONCESSION": {
+      "title": "Avoiding Forced Recaptures & Conceding Dangerous Passers",
+      "count": 1,
+      "otb_signal": "Opponent captures near your king (e.g., ...hxg3+) and only one recapture eliminates the intruder.",
+      "otb_action": "Never reject the natural recapture on intuition\u2014calculate the forced exchange sequence all the way to the quiet board and compare against leaving the enemy passer alive."
+    },
+    "SHARP_TACTICAL_HORIZON": {
+      "title": "Deep Tactical Calculation Horizon",
+      "count": 1,
+      "otb_signal": "Both kings are exposed with heavy pieces on open files and candidate moves diverge sharply.",
+      "otb_action": "Switch from general positional rules to strict candidate-move elimination: list checks, captures, and rook lifts at every ply."
+    }
+  }
+}
