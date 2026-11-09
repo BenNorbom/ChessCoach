@@ -48,6 +48,64 @@ function getCurrentChess() {
   return new window.Chess(fen);
 }
 
+/* ---------------- Position Evaluation & Live Cache ---------------- */
+const fenEvalCache = new Map();
+let evalFetchSeq = 0;
+
+function applyEvalToUI(winProb, evalStr) {
+  const thermo = document.getElementById("thermoFill");
+  const thermoContainer = document.getElementById("evalThermo");
+  const evalLabel = document.getElementById("currentEvalLabel");
+
+  if (thermo) {
+    const clampedProb = Math.max(0, Math.min(1, winProb));
+    thermo.style.height = `${Math.round(clampedProb * 100)}%`;
+  }
+  if (thermoContainer) {
+    thermoContainer.style.justifyContent = state.flipped ? "flex-start" : "flex-end";
+    const whitePct = Math.round(Math.max(0, Math.min(1, winProb)) * 100);
+    thermoContainer.title = `Eval: ${evalStr} (${whitePct}% White / ${100 - whitePct}% Black)`;
+  }
+  if (evalLabel) {
+    evalLabel.textContent = evalStr;
+    evalLabel.classList.remove("eval-positive", "eval-negative", "eval-even");
+    if (evalStr === "…" || evalStr === "loading") {
+      evalLabel.classList.add("eval-even");
+    } else if (evalStr.startsWith("+") || (evalStr.startsWith("#") && !evalStr.startsWith("-#"))) {
+      evalLabel.classList.add("eval-positive");
+    } else if (evalStr.startsWith("-")) {
+      evalLabel.classList.add("eval-negative");
+    } else {
+      evalLabel.classList.add("eval-even");
+    }
+  }
+}
+
+async function requestPositionEval(fen) {
+  if (fenEvalCache.has(fen)) {
+    return fenEvalCache.get(fen);
+  }
+
+  const mySeq = ++evalFetchSeq;
+  try {
+    const resp = await fetch(`/api/eval?fen=${encodeURIComponent(fen)}`);
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    fenEvalCache.set(fen, data);
+
+    if (getCurrentFen() === fen && mySeq === evalFetchSeq) {
+      applyEvalToUI(data.win_prob_white, data.eval_str);
+      if (state.variation && state.variation.step === state.variation.moves.length && data.best_move_uci) {
+        renderBoard();
+      }
+    }
+    return data;
+  } catch (err) {
+    console.warn("Live eval error:", err);
+    return null;
+  }
+}
+
 /* ---------------- Markdown-lite ---------------- */
 function esc(s) {
   return String(s ?? "").replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
@@ -115,8 +173,32 @@ function renderBoard() {
 
   const hl = new Set();
   const arrows = [];
-  let winProb = 0.5;
   const ply = currentPly();
+
+  let winProb = 0.5;
+  let evalStr = "0.00";
+  let bestReplyUci = null;
+
+  if (fenEvalCache.has(fen)) {
+    const cached = fenEvalCache.get(fen);
+    winProb = cached.win_prob_white;
+    evalStr = cached.eval_str;
+    bestReplyUci = cached.best_move_uci;
+  } else if (!state.variation && ply) {
+    winProb = ply.win_prob_white;
+    evalStr = ply.eval_white_str;
+    fenEvalCache.set(fen, {
+      fen,
+      eval_str: ply.eval_white_str,
+      win_prob_white: ply.win_prob_white,
+      best_move_uci: ply.best_before_uci || null,
+      best_move_san: ply.best_before_san || null
+    });
+  } else {
+    // Dynamic position evaluation on board
+    evalStr = "…";
+    requestPositionEval(fen);
+  }
 
   if (state.variation) {
     const v = state.variation;
@@ -128,12 +210,13 @@ function renderBoard() {
     // Arrow for next move in the variation
     if (v.step < v.moves.length) {
       arrows.push({ uci: v.moves[v.step].uci, kind: "line" });
+    } else if (bestReplyUci) {
+      arrows.push({ uci: bestReplyUci, kind: "best" });
     }
   } else {
     if (ply) {
       hl.add(ply.uci.slice(0, 2));
       hl.add(ply.uci.slice(2, 4));
-      winProb = ply.win_prob_white;
       const tp = state.tpByPly[ply.ply];
       if (tp) {
         arrows.push({ uci: tp.best_uci, kind: "best" });
@@ -207,15 +290,13 @@ function renderBoard() {
   });
 
   // Top header status
-  document.getElementById("thermoFill").style.height = `${Math.round(winProb * 100)}%`;
+  applyEvalToUI(winProb, evalStr);
   if (state.variation) {
     const v = state.variation;
     const curMove = v.step > 0 && v.moves[v.step - 1] ? v.moves[v.step - 1].san : "start";
     document.getElementById("currentMoveLabel").textContent = `${v.label} (${curMove})`;
-    document.getElementById("currentEvalLabel").textContent = "line";
   } else {
     document.getElementById("currentMoveLabel").textContent = ply ? movePrefix(ply) + ply.san : "Start position";
-    document.getElementById("currentEvalLabel").textContent = ply ? ply.eval_white_str : "0.00";
   }
 }
 
@@ -780,6 +861,29 @@ async function loadGame(id) {
   state.flipped = state.game.player_color === "black";
   state.tpByPly = {};
   for (const tp of state.game.turning_points || []) state.tpByPly[tp.ply] = tp;
+
+  // Pre-seed evaluation cache for starting position and all game plies
+  fenEvalCache.clear();
+  const initFen = state.game.initial_fen || "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1";
+  fenEvalCache.set(initFen, {
+    fen: initFen,
+    eval_str: "+0.20",
+    win_prob_white: 0.52,
+    best_move_uci: null,
+    best_move_san: null
+  });
+  for (const p of state.game.plies || []) {
+    if (p.fen_after) {
+      fenEvalCache.set(p.fen_after, {
+        fen: p.fen_after,
+        eval_str: p.eval_white_str ?? "0.00",
+        win_prob_white: p.win_prob_white ?? 0.5,
+        best_move_uci: p.best_before_uci || null,
+        best_move_san: p.best_before_san || null
+      });
+    }
+  }
+
   renderMoveList();
   renderEvalGraph();
   const m = location.hash.match(/ply=(\d+)/);

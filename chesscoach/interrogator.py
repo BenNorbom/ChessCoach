@@ -140,16 +140,34 @@ class HybridInterrogator:
 
     def start(self) -> None:
         if self._engine is None:
-            self._engine = chess.engine.SimpleEngine.popen_uci(self.stockfish_path)
+            self._engine = chess.engine.SimpleEngine.popen_uci(
+                self.stockfish_path, timeout=120.0
+            )
             self._engine.configure({"Threads": self.threads, "Hash": self.hash_mb})
 
     def close(self) -> None:
         if self._engine is not None:
             try:
-                self._engine.quit()
+                self._engine.close()
             except Exception:
                 pass
             self._engine = None
+
+    def is_alive(self) -> bool:
+        if self._engine is None:
+            return False
+        if getattr(self._engine, "_shutdown", True):
+            return False
+        if hasattr(self._engine, "returncode") and self._engine.returncode.done():
+            return False
+        loop = getattr(getattr(self._engine, "protocol", None), "loop", None)
+        if loop is None or not loop.is_running():
+            return False
+        return True
+
+    def restart(self) -> None:
+        self.close()
+        self.start()
 
     def __enter__(self) -> "HybridInterrogator":
         self.start()
@@ -160,10 +178,94 @@ class HybridInterrogator:
 
     @property
     def engine(self) -> chess.engine.SimpleEngine:
-        if self._engine is None:
-            self.start()
+        if not self.is_alive():
+            self.restart()
         assert self._engine is not None
         return self._engine
+
+    def safe_analyse(
+        self,
+        board: chess.Board,
+        limit: chess.engine.Limit,
+        multipv: int | None = None,
+    ) -> Any:
+        """Execute analyse with automatic transparent retry if the engine terminates."""
+        try:
+            if multipv is not None:
+                return self.engine.analyse(board, limit, multipv=multipv)
+            return self.engine.analyse(board, limit)
+        except (chess.engine.EngineTerminatedError, chess.engine.EngineError):
+            self.restart()
+            if multipv is not None:
+                return self.engine.analyse(board, limit, multipv=multipv)
+            return self.engine.analyse(board, limit)
+
+    def evaluate_position(
+        self,
+        fen: str,
+        depth: int = 12,
+        time_limit: float = 0.08,
+    ) -> dict[str, Any]:
+        """Evaluate a position specified by FEN, returning score, win probability, and best move."""
+        board = chess.Board(fen)
+
+        if board.is_checkmate():
+            if board.turn == chess.WHITE:
+                return {
+                    "fen": fen,
+                    "eval_cp": -3000,
+                    "eval_str": "-#0",
+                    "win_prob_white": 0.0,
+                    "is_game_over": True,
+                    "result": "0-1",
+                    "best_move_uci": None,
+                    "best_move_san": None,
+                }
+            else:
+                return {
+                    "fen": fen,
+                    "eval_cp": 3000,
+                    "eval_str": "#0",
+                    "win_prob_white": 1.0,
+                    "is_game_over": True,
+                    "result": "1-0",
+                    "best_move_uci": None,
+                    "best_move_san": None,
+                }
+
+        if board.is_stalemate() or board.is_insufficient_material() or board.can_claim_fifty_moves():
+            return {
+                "fen": fen,
+                "eval_cp": 0,
+                "eval_str": "0.00",
+                "win_prob_white": 0.5,
+                "is_game_over": True,
+                "result": "1/2-1/2",
+                "best_move_uci": None,
+                "best_move_san": None,
+            }
+
+        info = self.safe_analyse(board, chess.engine.Limit(depth=depth, time=time_limit))
+        score = info.get("score")
+        score_white = score.white() if score is not None else chess.engine.Cp(0)
+        cp = score_to_cp(score_white)
+        wp = cp_to_win_prob(cp)
+        eval_str = format_score(score_white)
+
+        pv = info.get("pv", [])
+        best_uci = pv[0].uci() if pv else None
+        best_san = board.san(pv[0]) if (pv and pv[0] in board.legal_moves) else None
+
+        return {
+            "fen": fen,
+            "eval_cp": cp,
+            "eval_str": eval_str,
+            "win_prob_white": round(wp, 4),
+            "is_game_over": False,
+            "result": "*",
+            "best_move_uci": best_uci,
+            "best_move_san": best_san,
+        }
 
     def interrogate_decision(
         self,
@@ -177,7 +279,7 @@ class HybridInterrogator:
         played_san = board_before.san(played_move)
 
         # 1. Multi-PV Root Search (Singularity & Top Candidate Plans)
-        mpv_infos = eng.analyse(
+        mpv_infos = self.safe_analyse(
             board_before, chess.engine.Limit(depth=deep_depth), multipv=3
         )
         if not isinstance(mpv_infos, list):
@@ -231,7 +333,7 @@ class HybridInterrogator:
             opponent_only_punishment = False
             opp_second_reply_san = None
         else:
-            ref_infos = eng.analyse(
+            ref_infos = self.safe_analyse(
                 board_after_played, chess.engine.Limit(depth=deep_depth), multipv=2
             )
             if not isinstance(ref_infos, list):
@@ -330,7 +432,7 @@ class HybridInterrogator:
             null_board.turn = not board_before.turn
             null_board.ep_square = None
             if not null_board.is_game_over():
-                n_info = eng.analyse(null_board, chess.engine.Limit(depth=12))
+                n_info = self.safe_analyse(null_board, chess.engine.Limit(depth=12))
                 n_pv = n_info.get("pv", [])
                 if n_pv:
                     pre_move = n_pv[0]
@@ -364,7 +466,7 @@ class HybridInterrogator:
         board_after_best.push(best_move)
         if not board_after_best.is_game_over():
             # Shallow multi-PV on board_after_best to spot tempting opponent tries
-            shallow_opp_infos = eng.analyse(
+            shallow_opp_infos = self.safe_analyse(
                 board_after_best, chess.engine.Limit(depth=3), multipv=4
             )
             if not isinstance(shallow_opp_infos, list):
@@ -390,7 +492,7 @@ class HybridInterrogator:
                 sim_alt.push(alt_opp)
                 if sim_alt.is_game_over():
                     continue
-                alt_res = eng.analyse(sim_alt, chess.engine.Limit(depth=12))
+                alt_res = self.safe_analyse(sim_alt, chess.engine.Limit(depth=12))
                 alt_pv = alt_res.get("pv", [])
                 alt_cp_player = score_to_cp(alt_res["score"].pov(perspective))
                 counterfactuals.append(
@@ -501,7 +603,7 @@ class HybridInterrogator:
 
         # Evaluate initial position
         scan_limit = chess.engine.Limit(depth=scan_depth, time=0.09)
-        init_info = eng.analyse(board, scan_limit)
+        init_info = self.safe_analyse(board, scan_limit)
         prev_info = init_info
         prev_wb = evaluate_whitebox(board)
 
@@ -542,7 +644,7 @@ class HybridInterrogator:
                     cp_white = 0
                 curr_info = prev_info
             else:
-                curr_info = eng.analyse(board, scan_limit)
+                curr_info = self.safe_analyse(board, scan_limit)
                 cp_after_mover = score_to_cp(curr_info["score"].pov(mover))
                 eval_white_str = format_score(curr_info["score"].white())
                 cp_white = score_to_cp(curr_info["score"].white())
@@ -665,7 +767,7 @@ class HybridInterrogator:
                 }
 
         # Position-level Multi-PV + Null-Move Threat + White-Box breakdown
-        mpv = eng.analyse(board, chess.engine.Limit(depth=depth), multipv=3)
+        mpv = self.safe_analyse(board, chess.engine.Limit(depth=depth), multipv=3)
         if not isinstance(mpv, list):
             mpv = [mpv]
 
@@ -692,7 +794,7 @@ class HybridInterrogator:
             nb.turn = not board.turn
             nb.ep_square = None
             if not nb.is_game_over():
-                ninfo = eng.analyse(nb, chess.engine.Limit(depth=12))
+                ninfo = self.safe_analyse(nb, chess.engine.Limit(depth=12))
                 npv = ninfo.get("pv", [])
                 if npv:
                     opp_threat = {

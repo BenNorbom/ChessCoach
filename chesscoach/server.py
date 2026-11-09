@@ -14,7 +14,7 @@ from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
-from chesscoach.config import ANALYSES_DIR, UI_DIR, LLMSettings, ensure_stockfish, migrate_legacy_data
+from chesscoach.config import ANALYSES_DIR, ROOT_DIR, UI_DIR, LLMSettings, ensure_stockfish, migrate_legacy_data
 from chesscoach.interrogator import HybridInterrogator
 from chesscoach.llm_client import is_llm_configured
 from chesscoach.qa_coach import answer_coaching_question
@@ -77,6 +77,12 @@ class QARequest(BaseModel):
     fen_before: str | None = None
     ply_meta: dict[str, Any] | None = None
     perspective: str = "white"
+
+
+class EvalRequest(BaseModel):
+    fen: str
+    depth: int = 12
+    time_limit: float = 0.08
 
 
 class SettingsUpdateRequest(BaseModel):
@@ -153,6 +159,18 @@ def analyze_new_game(req: AnalyzeRequest) -> dict[str, Any]:
             )
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception:
+            interrogator.restart()
+            try:
+                raw = interrogator.analyze_pgn(
+                    req.pgn_text,
+                    player_color_str=req.player_color,
+                    scan_depth=13,
+                    deep_depth=17,
+                    max_turning_points=8,
+                )
+            except Exception as retry_exc:
+                raise HTTPException(status_code=500, detail=str(retry_exc)) from retry_exc
 
     report = synthesize_coaching_report(raw, settings=LLMSettings.load(), persist_profile=True)
     report["id"] = game_id
@@ -172,7 +190,7 @@ def ask_coach(req: QARequest) -> dict[str, Any]:
     with _engine_lock:
         interrogator = get_interrogator()
         try:
-            res = answer_coaching_question(
+            return answer_coaching_question(
                 interrogator=interrogator,
                 question=req.question,
                 fen_current=req.fen_current,
@@ -181,10 +199,45 @@ def ask_coach(req: QARequest) -> dict[str, Any]:
                 perspective_str=req.perspective,
                 settings=LLMSettings.load(),
             )
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        except Exception:
+            interrogator.restart()
+            try:
+                return answer_coaching_question(
+                    interrogator=interrogator,
+                    question=req.question,
+                    fen_current=req.fen_current,
+                    fen_before=req.fen_before,
+                    ply_meta=req.ply_meta,
+                    perspective_str=req.perspective,
+                    settings=LLMSettings.load(),
+                )
+            except Exception as retry_exc:
+                raise HTTPException(status_code=400, detail=str(retry_exc)) from retry_exc
 
-    return res
+
+@app.post("/api/eval")
+def evaluate_position_endpoint(req: EvalRequest) -> dict[str, Any]:
+    if not req.fen.strip():
+        raise HTTPException(status_code=400, detail="FEN cannot be empty.")
+    try:
+        with _engine_lock:
+            interrogator = get_interrogator()
+            return interrogator.evaluate_position(req.fen.strip(), depth=req.depth, time_limit=req.time_limit)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid FEN: {exc}") from exc
+    except Exception:
+        with _engine_lock:
+            interrogator = get_interrogator()
+            interrogator.restart()
+            try:
+                return interrogator.evaluate_position(req.fen.strip(), depth=req.depth, time_limit=req.time_limit)
+            except Exception as retry_exc:
+                raise HTTPException(status_code=500, detail=str(retry_exc)) from retry_exc
+
+
+@app.get("/api/eval")
+def evaluate_position_get(fen: str, depth: int = 12, time_limit: float = 0.08) -> dict[str, Any]:
+    return evaluate_position_endpoint(EvalRequest(fen=fen, depth=depth, time_limit=time_limit))
 
 
 @app.get("/api/settings")
@@ -218,6 +271,10 @@ def update_settings(req: SettingsUpdateRequest) -> dict[str, Any]:
         "llm_active": is_llm_configured(cfg),
     }
 
+
+ASSETS_DIR = ROOT_DIR / "assets"
+if ASSETS_DIR.is_dir():
+    app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
 
 if UI_DIR.is_dir():
     app.mount("/static", StaticFiles(directory=str(UI_DIR)), name="static")

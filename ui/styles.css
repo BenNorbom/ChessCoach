@@ -233,6 +233,23 @@ body {
 .eval-pill {
   font-family: Consolas, ui-monospace, monospace; font-weight: 700; font-size: 14px;
   padding: 3px 9px; border-radius: 4px; background: var(--panel-2);
+  transition: background-color 0.2s, color 0.2s, border-color 0.2s;
+  border: 1px solid transparent;
+}
+.eval-pill.eval-positive {
+  color: #7fb65a;
+  background: rgba(127, 182, 90, 0.12);
+  border-color: rgba(127, 182, 90, 0.35);
+}
+.eval-pill.eval-negative {
+  color: #e2574c;
+  background: rgba(226, 87, 76, 0.12);
+  border-color: rgba(226, 87, 76, 0.35);
+}
+.eval-pill.eval-even {
+  color: var(--muted);
+  background: var(--panel-2);
+  border-color: var(--border);
 }
 
 .move-list {
