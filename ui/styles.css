@@ -146,7 +146,7 @@ body {
 }
 .sq.light { background: var(--sq-light); }
 .sq.dark { background: var(--sq-dark); }
-.sq.hl::after { content: ""; position: absolute; inset: 0; background: var(--sq-hl); pointer-events: none; }
+.sq.hl::after { display: none !important; }
 .sq.selected { background: #baca44 !important; }
 .sq.selected::after {
   content: ""; position: absolute; inset: 0; box-shadow: inset 0 0 0 3px rgba(255, 255, 255, 0.85); pointer-events: none;
@@ -156,18 +156,98 @@ body {
 .sq.dragging-source svg.piece-svg { opacity: 0.15; }
 .sq.drag-hover { background: rgba(186, 202, 68, 0.65) !important; box-shadow: inset 0 0 0 3px #fff !important; }
 .sq.can-dest { cursor: pointer; }
-.move-dot {
-  position: absolute; width: 24%; height: 24%; background: rgba(0, 0, 0, 0.3);
-  border-radius: 50%; pointer-events: none;
+
+/* Move destination dots & capture rings on board */
+.sq .move-dot {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 28%;
+  height: 28%;
+  background: rgba(0, 0, 0, 0.28);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 2;
 }
-.capture-ring {
-  position: absolute; inset: 6%; border: 6px solid rgba(0, 0, 0, 0.28);
-  border-radius: 50%; pointer-events: none;
+.sq .capture-ring {
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  transform: translate(-50%, -50%);
+  width: 86%;
+  height: 86%;
+  box-sizing: border-box;
+  border: 6px solid rgba(0, 0, 0, 0.28);
+  border-radius: 50%;
+  pointer-events: none;
+  z-index: 2;
 }
 
+/* Chess Pieces: centered horizontally & vertically in square */
 .piece-svg {
-  width: 90%; height: 90%; pointer-events: none;
+  width: 90%;
+  height: 90%;
+  max-width: 90%;
+  max-height: 90%;
+  display: block;
+  margin: auto;
+  pointer-events: none;
   filter: drop-shadow(0 2px 3px rgba(0, 0, 0, 0.35));
+}
+
+/* Board Square Coordinates (Corner Numbers & Letters inside squares) */
+.coord-rank,
+.coord-file {
+  position: absolute;
+  font-size: clamp(10px, calc(var(--board-size) / 52), 13.5px);
+  font-weight: 700;
+  line-height: 1;
+  pointer-events: none;
+  user-select: none;
+  -webkit-user-select: none;
+  z-index: 3;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+.coord-rank {
+  top: clamp(2px, calc(var(--board-size) / 180), 4px);
+  left: clamp(3px, calc(var(--board-size) / 160), 5px);
+}
+.coord-file {
+  bottom: clamp(2px, calc(var(--board-size) / 180), 4px);
+  right: clamp(3px, calc(var(--board-size) / 160), 5px);
+}
+.sq.light .coord-rank,
+.sq.light .coord-file {
+  color: var(--sq-dark);
+}
+.sq.dark .coord-rank,
+.sq.dark .coord-file {
+  color: var(--sq-light);
+}
+
+/* Dragging Piece Floating Avatar */
+.drag-avatar {
+  position: fixed;
+  pointer-events: none;
+  z-index: 99999;
+  transform: translate(-50%, -50%);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  filter: drop-shadow(0 12px 24px rgba(0, 0, 0, 0.7));
+  cursor: grabbing;
+  touch-action: none;
+}
+.drag-avatar svg.piece-svg {
+  width: 95%;
+  height: 95%;
+  pointer-events: none;
+}
+body.is-dragging-piece,
+body.is-dragging-piece * {
+  cursor: grabbing !important;
+  user-select: none !important;
 }
 
 .arrow-layer {
@@ -672,17 +752,17 @@ body {
   color: #fff;
   font-weight: 700;
 }
-.move-dot {
+.move-cell .eval-dot {
   width: 7px;
   height: 7px;
   border-radius: 50%;
   display: inline-block;
   flex-shrink: 0;
 }
-.move-dot.blunder { background: var(--danger); }
-.move-dot.mistake { background: var(--warn); }
-.move-dot.inaccuracy { background: #f0c15c; }
-.move-dot.best { background: var(--good); }
+.move-cell .eval-dot.blunder { background: var(--danger); }
+.move-cell .eval-dot.mistake { background: var(--warn); }
+.move-cell .eval-dot.inaccuracy { background: #f0c15c; }
+.move-cell .eval-dot.best { background: var(--good); }
 
 /* ---------- TAB 3: ANALYSIS PANE ---------- */
 .analysis-container {

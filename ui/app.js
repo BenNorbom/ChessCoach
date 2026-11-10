@@ -205,11 +205,6 @@ function renderBoard() {
 
   if (state.variation) {
     const v = state.variation;
-    if (v.step > 0 && v.moves[v.step - 1]) {
-      const last = v.moves[v.step - 1].uci;
-      hl.add(last.slice(0, 2));
-      hl.add(last.slice(2, 4));
-    }
     // Arrow for next move in the variation
     if (v.step < v.moves.length) {
       arrows.push({ uci: v.moves[v.step].uci, kind: "line" });
@@ -218,8 +213,6 @@ function renderBoard() {
     }
   } else {
     if (ply) {
-      hl.add(ply.uci.slice(0, 2));
-      hl.add(ply.uci.slice(2, 4));
       const tp = state.tpByPly[ply.ply];
       if (tp) {
         arrows.push({ uci: tp.best_uci, kind: "best" });
@@ -1004,12 +997,12 @@ function renderMoveList() {
     const moveNum = whitePly.move_number || Math.floor(i / 2) + 1;
 
     const tpW = state.tpByPly[whitePly.ply];
-    const dotW = tpW ? `<span class="move-dot ${tpW.severity}"></span>` : "";
+    const dotW = tpW ? `<span class="eval-dot ${tpW.severity}"></span>` : "";
 
     let blackCellHtml = "";
     if (blackPly) {
       const tpB = state.tpByPly[blackPly.ply];
-      const dotB = tpB ? `<span class="move-dot ${tpB.severity}"></span>` : "";
+      const dotB = tpB ? `<span class="eval-dot ${tpB.severity}"></span>` : "";
       blackCellHtml = `
         <span class="move-cell" data-ply="${blackPly.ply}">
           <span>${esc(blackPly.san)}</span>
