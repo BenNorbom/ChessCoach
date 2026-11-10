@@ -273,20 +273,10 @@ function renderBoard() {
   boardEl.innerHTML = html;
   drawArrows(arrows);
 
-  // Bind square clicks and drag events
+  // Bind square pointer events for click-to-move and drag-and-drop
   boardEl.querySelectorAll(".sq").forEach((sqEl) => {
     const sq = sqEl.dataset.sq;
-    sqEl.onclick = () => onSquareClick(sq);
-
-    // Drag-and-drop
-    sqEl.ondragover = (e) => e.preventDefault();
-    sqEl.ondrop = (e) => onDrop(e, sq);
-
-    const svg = sqEl.querySelector(".piece-svg");
-    if (svg && sqEl.classList.contains("has-piece")) {
-      svg.setAttribute("draggable", "true");
-      svg.ondragstart = (e) => onDragStart(e, sq);
-    }
+    sqEl.onpointerdown = (e) => onSquarePointerDown(e, sq);
   });
 
   // Top header status
@@ -300,18 +290,23 @@ function renderBoard() {
   }
 }
 
-/* ---------------- Piece Movement & Interaction ---------------- */
-function onSquareClick(sq) {
+/* ---------------- Piece Movement & Drag-and-Drop Interaction ---------------- */
+let activeDrag = null;
+
+function onSquarePointerDown(e, sq) {
+  // Only primary mouse button or touch
+  if (e.button !== 0 && e.pointerType === "mouse") return;
+
   const c = getCurrentChess();
-  
-  // If a square is already selected and clicked square is a destination:
+
+  // 1. If a square is already selected and clicked square is one of legal destinations:
   const dest = state.legalDestinations.find((d) => d.to === sq);
   if (state.selectedSquare && dest) {
     makeUserMove(state.selectedSquare, sq, dest.promotion ? "q" : undefined);
     return;
   }
-  
-  // If clicked square has a piece belonging to the side to move:
+
+  // 2. Check if clicked square has a piece belonging to the side to move:
   const piece = c.get(sq);
   if (piece && piece.color === c.turn()) {
     state.selectedSquare = sq;
@@ -321,11 +316,29 @@ function onSquareClick(sq) {
       isCapture: Boolean(m.captured || m.flags.includes("c") || m.flags.includes("e")),
       promotion: Boolean(m.promotion || m.flags.includes("p"))
     }));
+
     renderBoard();
+
+    const sqEl = document.querySelector(`.sq[data-sq="${sq}"]`);
+    const rect = sqEl ? sqEl.getBoundingClientRect() : { width: 80, height: 80 };
+    const pieceChar = piece.color === "w" ? piece.type.toUpperCase() : piece.type.toLowerCase();
+
+    activeDrag = {
+      fromSq: sq,
+      pieceChar,
+      startX: e.clientX,
+      startY: e.clientY,
+      isDragging: false,
+      avatarEl: null,
+      sqEl,
+      size: Math.min(rect.width, rect.height) || 80
+    };
+
+    e.preventDefault();
     return;
   }
-  
-  // Clicking anywhere else deselects
+
+  // 3. Clicking anywhere else deselects
   if (state.selectedSquare) {
     state.selectedSquare = null;
     state.legalDestinations = [];
@@ -333,40 +346,100 @@ function onSquareClick(sq) {
   }
 }
 
-function onDragStart(e, sq) {
-  const c = getCurrentChess();
-  const piece = c.get(sq);
-  if (!piece || piece.color !== c.turn()) {
-    e.preventDefault();
-    return;
-  }
-  state.selectedSquare = sq;
-  state.dragSquare = sq;
-  const verboseMoves = c.moves({ square: sq, verbose: true });
-  state.legalDestinations = verboseMoves.map((m) => ({
-    to: m.to,
-    isCapture: Boolean(m.captured || m.flags.includes("c") || m.flags.includes("e")),
-    promotion: Boolean(m.promotion || m.flags.includes("p"))
-  }));
-  renderBoard();
-  e.dataTransfer.setData("text/plain", sq);
-  e.dataTransfer.effectAllowed = "move";
-}
+// Global pointer movement and release listeners
+window.addEventListener("pointermove", (e) => {
+  if (!activeDrag) return;
 
-function onDrop(e, sq) {
-  e.preventDefault();
-  const from = state.dragSquare || state.selectedSquare;
-  state.dragSquare = null;
-  if (!from) return;
-  const dest = state.legalDestinations.find((d) => d.to === sq);
-  if (dest) {
-    makeUserMove(from, sq, dest.promotion ? "q" : undefined);
-  } else {
+  const d = activeDrag;
+  const dist = Math.hypot(e.clientX - d.startX, e.clientY - d.startY);
+
+  if (!d.isDragging) {
+    if (dist > 5) {
+      d.isDragging = true;
+      const avatar = document.createElement("div");
+      avatar.className = "drag-avatar";
+      avatar.style.width = `${d.size}px`;
+      avatar.style.height = `${d.size}px`;
+      avatar.style.left = `${e.clientX}px`;
+      avatar.style.top = `${e.clientY}px`;
+      avatar.innerHTML = PIECE_SVGS[d.pieceChar] || "";
+      document.body.appendChild(avatar);
+      d.avatarEl = avatar;
+
+      if (d.sqEl) d.sqEl.classList.add("dragging-source");
+      document.body.classList.add("is-dragging-piece");
+    }
+  }
+
+  if (d.isDragging && d.avatarEl) {
+    d.avatarEl.style.left = `${e.clientX}px`;
+    d.avatarEl.style.top = `${e.clientY}px`;
+
+    const el = document.elementFromPoint(e.clientX, e.clientY)?.closest(".sq");
+    const targetSq = el ? el.dataset.sq : null;
+
+    document.querySelectorAll(".sq.drag-hover").forEach((s) => s.classList.remove("drag-hover"));
+    if (targetSq && state.legalDestinations.some((m) => m.to === targetSq)) {
+      el.classList.add("drag-hover");
+    }
+  }
+});
+
+window.addEventListener("pointerup", (e) => {
+  if (!activeDrag) return;
+
+  const d = activeDrag;
+  activeDrag = null;
+
+  document.body.classList.remove("is-dragging-piece");
+  document.querySelectorAll(".sq.drag-hover").forEach((s) => s.classList.remove("drag-hover"));
+  if (d.sqEl) d.sqEl.classList.remove("dragging-source");
+  if (d.avatarEl) d.avatarEl.remove();
+
+  if (d.isDragging) {
+    const el = document.elementFromPoint(e.clientX, e.clientY)?.closest(".sq");
+    const targetSq = el ? el.dataset.sq : null;
+
+    if (targetSq && targetSq !== d.fromSq) {
+      const dest = state.legalDestinations.find((m) => m.to === targetSq);
+      if (dest) {
+        makeUserMove(d.fromSq, targetSq, dest.promotion ? "q" : undefined);
+        return;
+      }
+
+      // Check if dropped onto another friendly piece -> select that piece instead!
+      const c = getCurrentChess();
+      const piece = c.get(targetSq);
+      if (piece && piece.color === c.turn()) {
+        state.selectedSquare = targetSq;
+        const verboseMoves = c.moves({ square: targetSq, verbose: true });
+        state.legalDestinations = verboseMoves.map((m) => ({
+          to: m.to,
+          isCapture: Boolean(m.captured || m.flags.includes("c") || m.flags.includes("e")),
+          promotion: Boolean(m.promotion || m.flags.includes("p"))
+        }));
+        renderBoard();
+        return;
+      }
+    }
+
     state.selectedSquare = null;
     state.legalDestinations = [];
     renderBoard();
   }
-}
+});
+
+window.addEventListener("pointercancel", () => {
+  if (!activeDrag) return;
+  if (activeDrag.avatarEl) activeDrag.avatarEl.remove();
+  if (activeDrag.sqEl) activeDrag.sqEl.classList.remove("dragging-source");
+  document.body.classList.remove("is-dragging-piece");
+  document.querySelectorAll(".sq.drag-hover").forEach((s) => s.classList.remove("drag-hover"));
+  activeDrag = null;
+  state.selectedSquare = null;
+  state.legalDestinations = [];
+  renderBoard();
+});
 
 function makeUserMove(from, to, promotion = "q") {
   const currentFen = getCurrentFen();
