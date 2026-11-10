@@ -62,6 +62,19 @@ def _start_server(port: int) -> tuple[uvicorn.Server, bool]:
     return server, False
 
 
+APP_USER_MODEL_ID = "ChessCoach.DesktopApp.1.0"
+
+
+def _set_process_app_id() -> None:
+    """Set the Windows Application User Model ID so the taskbar groups and shows our icon."""
+    if sys.platform == "win32":
+        try:
+            import ctypes
+            ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(APP_USER_MODEL_ID)
+        except Exception:
+            pass
+
+
 def _open_native_window(url: str) -> bool:
     """Open a true native standalone desktop window via pywebview (embedded WebView2).
 
@@ -69,10 +82,17 @@ def _open_native_window(url: str) -> bool:
     custom icon, and native window frame without running as an Edge browser instance.
     """
     try:
+        import ctypes
         import webview
 
+        _set_process_app_id()
+
         ico_path = Path(__file__).resolve().parent.parent / "assets" / "icon.ico"
-        icon_arg = str(ico_path) if ico_path.is_file() else None
+        icon_str = str(ico_path.resolve()) if ico_path.is_file() else None
+
+        # Pre-seed pywebview internal state so WinForms Form constructor receives the icon
+        if icon_str:
+            webview._state["icon"] = icon_str
 
         window = webview.create_window(
             title="ChessCoach",
@@ -83,7 +103,53 @@ def _open_native_window(url: str) -> bool:
             background_color="#161512",
             text_select=True,
         )
-        webview.start(icon=icon_arg, private_mode=False)
+
+        def _apply_windows_taskbar_icon() -> None:
+            if sys.platform != "win32" or not icon_str:
+                return
+            try:
+                from webview.platforms import winforms
+                browser = winforms.BrowserView.instances.get(window.uid)
+                if not browser:
+                    return
+
+                hwnd = browser.Handle.ToInt64()
+                WM_SETICON = 0x0080
+                ICON_SMALL = 0
+                ICON_BIG = 1
+                IMAGE_ICON = 1
+                LR_LOADFROMFILE = 0x00000010
+                LR_DEFAULTSIZE = 0x00000040
+
+                # Load both 32x32/48x48 (taskbar) and 16x16 (window header) native icon handles
+                hicon_big = ctypes.windll.user32.LoadImageW(
+                    None, icon_str, IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE
+                )
+                hicon_small = ctypes.windll.user32.LoadImageW(
+                    None, icon_str, IMAGE_ICON, 16, 16, LR_LOADFROMFILE
+                )
+
+                if hicon_big:
+                    ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_BIG, hicon_big)
+                    GCLP_HICON = -14
+                    try:
+                        ctypes.windll.user32.SetClassLongPtrW(hwnd, GCLP_HICON, hicon_big)
+                    except Exception:
+                        pass
+                if hicon_small:
+                    ctypes.windll.user32.SendMessageW(hwnd, WM_SETICON, ICON_SMALL, hicon_small)
+                    GCLP_HICONSM = -34
+                    try:
+                        ctypes.windll.user32.SetClassLongPtrW(hwnd, GCLP_HICONSM, hicon_small)
+                    except Exception:
+                        pass
+            except Exception:
+                pass
+
+        window.events.shown += _apply_windows_taskbar_icon
+        window.events.loaded += _apply_windows_taskbar_icon
+
+        webview.start(icon=icon_str, private_mode=False)
         return True
     except Exception as e:
         print(f"pywebview native window unavailable, falling back: {e}", file=sys.stderr)
@@ -123,9 +189,10 @@ def _open_standalone_app_window(url: str) -> bool:
 
 
 def main() -> None:
+    _set_process_app_id()
     try:
         from install_shortcut import install_start_menu_shortcut
-        install_start_menu_shortcut()
+        install_start_menu_shortcut(force=True)
     except Exception:
         pass
 

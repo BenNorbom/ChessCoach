@@ -818,195 +818,41 @@ function renderTurningPointNote(ply, tp) {
 function renderVariationNote(v) {
   const currentFen = getCurrentFen();
   const cached = fenEvalCache.get(currentFen) || {};
-  const tp = v.originTp || (state.game && currentPly() ? state.tpByPly[currentPly().ply] : null);
   const totalMoves = v.moves.length;
   const curMove = v.step > 0 && v.moves[v.step - 1] ? v.moves[v.step - 1] : null;
 
-  let badgeCls = "good";
-  let badgeText = "EXPLORING LINE";
-  if (v.kind === "refutation" || v.label.toLowerCase().includes("refutation")) {
-    badgeCls = "blunder";
-    badgeText = "REFUTATION LINE";
-  } else if (v.kind === "best" || v.label.toLowerCase().includes("best")) {
-    badgeCls = "good";
-    badgeText = "RECOMMENDED BEST LINE";
-  } else if (v.kind === "counterfactual" || v.label.toLowerCase().includes("if ")) {
-    badgeCls = "mistake";
-    badgeText = "COUNTERFACTUAL TRY";
-  } else if (v.kind === "user_move" || v.kind === "try_moves" || v.label.toLowerCase().includes("what-if") || v.label.toLowerCase().includes("decision before")) {
-    badgeCls = "line";
-    badgeText = "WHAT-IF EXPERIMENT";
+  let badgeText = "Exploring Line";
+  let badgeCls = "badge-good";
+  if (v.kind === "refutation") {
+    badgeText = "Refutation Line";
+    badgeCls = "badge-blunder";
+  } else if (v.kind === "best") {
+    badgeText = "Best Line";
+    badgeCls = "badge-best";
   }
 
-  // 1. Step Title & Subtitle
-  let stepTitle = "";
-  if (v.step === 0) {
-    stepTitle = `Position before line starts (Move 0 of ${totalMoves})`;
-  } else {
-    const moveNum = curMove.move_number || Math.floor((v.step + 1) / 2);
-    const prefix = curMove.color === "w" ? `${moveNum}. ` : `${moveNum}... `;
-    stepTitle = `Move ${v.step} of ${totalMoves}: <code>${esc(prefix + curMove.san)}</code>`;
-  }
-
-  // 2. Dynamic Move-by-Move Coaching Commentary
-  let commentaryHtml = "";
-  const evalDisplay = cached.eval_str || "evaluating…";
-
-  if (v.kind === "refutation" || v.label.toLowerCase().includes("refutation")) {
-    if (v.step === 0) {
-      commentaryHtml = `
-        <h4>Why this position is critical</h4>
-        <p>In the game, you played <code>${esc(tp ? tp.played_san : "")}</code>. This refutation line proves why that choice backfired.</p>
-        <p class="muted small">Click <strong>Next Move ▶</strong> or press <strong>Right Arrow (&rarr;)</strong> to step through how opponent punishes it.</p>
-      `;
-    } else if (v.step === 1) {
-      commentaryHtml = `
-        <h4>The Game Move: <code>${esc(curMove.san)}</code></h4>
-        <p>This is where the mistake occurred. Stockfish eval: <strong>${esc(evalDisplay)}</strong>.</p>
-        <p><strong>Root Cause:</strong> ${esc(tp ? tp.root_cause_title : "")}</p>
-        <p>${inlineMd(tp ? tp.coaching.your_likely_intent : "")}</p>
-        <p class="small muted">Notice the square and piece weaknesses this move leaves behind.</p>
-      `;
-    } else if (v.step === 2) {
-      const whyBackfired = tp ? tp.coaching.why_it_backfired : "";
-      commentaryHtml = `
-        <h4>Opponent's Punishment: <code>${esc(curMove.san)}</code>!</h4>
-        <p>Opponent strikes! Stockfish eval swings to <strong>${esc(evalDisplay)}</strong>.</p>
-        <p>${inlineMd(whyBackfired)}</p>
-      `;
-    } else {
-      const isPlayer = state.game && curMove.color === state.game.player_color;
-      const actor = isPlayer ? "Your defense" : "Opponent's attack";
-      commentaryHtml = `
-        <h4>${actor}: <code>${esc(curMove.san)}</code></h4>
-        <p>Position evaluation: <strong>${esc(evalDisplay)}</strong>.</p>
-        ${v.step === totalMoves ? `
-          <div class="takeaway"><strong>End of Refutation Line:</strong> Opponent has established decisive tactical or positional control (Eval: <strong>${esc(evalDisplay)}</strong>). Notice the difference compared to playing the Recommended Best Line!</div>
-        ` : `
-          <p class="small muted">Follow the forcing sequence to see how material or space is conceded.</p>
-        `}
-      `;
-    }
-  } else if (v.kind === "best" || v.label.toLowerCase().includes("best")) {
-    if (v.step === 0) {
-      commentaryHtml = `
-        <h4>The Recommended Master Line</h4>
-        <p>Stockfish strongly recommends <code>${esc(tp ? tp.best_san : "")}</code> instead of the game move (<code>${esc(tp ? tp.played_san : "")}</code>).</p>
-        <p class="muted small">Click <strong>Next Move ▶</strong> or press <strong>Right Arrow (&rarr;)</strong> to follow the active plan.</p>
-      `;
-    } else if (v.step === 1) {
-      const whyBest = tp ? tp.coaching.why_best_works.split("**Answering the OTB Doubt:**")[0] : "";
-      commentaryHtml = `
-        <h4>Engine Choice: <code>${esc(curMove.san)}</code>!</h4>
-        <p>Stockfish eval: <strong>${esc(evalDisplay)}</strong> (White win chance: ${cached.win_prob_white ? Math.round(cached.win_prob_white * 100) + "%" : "..."}).</p>
-        <p>${inlineMd(whyBest)}</p>
-      `;
-    } else {
-      const isPlayer = state.game && curMove.color === state.game.player_color;
-      const actor = isPlayer ? "Active initiative" : "Opponent's defensive try";
-      commentaryHtml = `
-        <h4>${actor}: <code>${esc(curMove.san)}</code></h4>
-        <p>Position evaluation: <strong>${esc(evalDisplay)}</strong>.</p>
-        ${v.step === totalMoves ? `
-          <div class="takeaway"><strong>End of Master Line:</strong> You retain a commanding advantage (Eval: <strong>${esc(evalDisplay)}</strong>). Pieces are active and central control is established.</div>
-        ` : `
-          <p class="small muted">Notice how each piece coordinates smoothly to control key squares.</p>
-        `}
-      `;
-    }
-  } else if (v.kind === "counterfactual" || v.label.toLowerCase().includes("if ")) {
-    if (v.step === 0) {
-      commentaryHtml = `
-        <h4>Testing Opponent's Alternate Defense</h4>
-        <p>Testing what happens if opponent tries an alternative defense against your best line.</p>
-      `;
-    } else if (v.step === 1) {
-      commentaryHtml = `
-        <h4>Your Best Move: <code>${esc(curMove.san)}</code></h4>
-        <p>Establishing the active threat. Eval: <strong>${esc(evalDisplay)}</strong>.</p>
-      `;
-    } else if (v.step === 2) {
-      commentaryHtml = `
-        <h4>Opponent's Try: <code>${esc(curMove.san)}</code></h4>
-        <p>Opponent tries to deflect or challenge your plan. Eval: <strong>${esc(evalDisplay)}</strong>.</p>
-      `;
-    } else {
-      commentaryHtml = `
-        <h4>Tactical Refutation: <code>${esc(curMove.san)}</code>!</h4>
-        <p>This defuses opponent's idea and wins decisive advantage (Eval: <strong>${esc(evalDisplay)}</strong>).</p>
-      `;
-    }
-  } else {
-    // Custom user moves on board (What-if testing)
-    if (v.step === 0) {
-      commentaryHtml = `
-        <h4>Try Your Own Moves</h4>
-        <p>The board is set before the critical decision (<code>${esc(tp ? tp.played_san : "")}</code>). <strong>Drag and drop any piece to test a move you would have chosen!</strong></p>
-        <p class="muted small">Stockfish will evaluate it in real time and show you the best continuation.</p>
-      `;
-    } else {
-      let verdictBadge = "";
-      let verdictMsg = "";
-      if (cached.eval_cp !== undefined && tp) {
-        const diff = cached.eval_cp - tp.played_eval_cp;
-        const colorFactor = (tp.color === "white" || tp.color === "w") ? 1 : -1;
-        const gain = diff * colorFactor;
-
-        if (curMove.san === tp.best_san) {
-          verdictBadge = `<span class="verdict good">BEST MOVE</span>`;
-          verdictMsg = `<p style="color:#a8d88a;font-weight:600">🌟 Outstanding! You found the engine's top recommendation (<code>${esc(tp.best_san)}</code>)!</p>`;
-        } else if (gain >= 40) {
-          verdictBadge = `<span class="verdict good">STRONG CHOICE</span>`;
-          verdictMsg = `<p style="color:#a8d88a">✅ Much better than your game move! You gained +${(gain/100).toFixed(2)} in evaluation.</p>`;
-        } else if (gain <= -70) {
-          verdictBadge = `<span class="verdict blunder">BLUNDER / RISK</span>`;
-          verdictMsg = `<p style="color:#f08a80">⚠️ This gives opponent a strong counter-attack (loses ${(Math.abs(gain)/100).toFixed(2)} eval).</p>`;
-        } else {
-          verdictBadge = `<span class="verdict good">PLAYABLE</span>`;
-          verdictMsg = `<p>Solid move. Keeps the position playable.</p>`;
-        }
-      }
-
-      commentaryHtml = `
-        <h4>Your Move: <code>${esc(curMove.san)}</code> ${verdictBadge}</h4>
-        ${verdictMsg}
-        <p>Stockfish eval: <strong>${esc(evalDisplay)}</strong> (White win chance: ${cached.win_prob_white ? Math.round(cached.win_prob_white * 100) + "%" : "..."}).</p>
-        ${cached.best_move_san ? `
-          <div class="line-box" style="margin-top:12px;">
-            <div class="line-box-info">
-              <div class="line-box-title">Stockfish's Response: <code>${esc(cached.best_move_san)}</code></div>
-              <div class="line-box-preview">${esc(cached.pv_formatted || cached.best_move_san)}</div>
-            </div>
-            <button class="btn-play-line" id="btnPlayEngineResponse" data-uci='${JSON.stringify([cached.best_move_uci])}' data-label="Play ${esc(cached.best_move_san)}">
-              &#9654; Play Response
-            </button>
-          </div>
-        ` : ""}
-      `;
-    }
-  }
-
-  // 3. Navigation Controls
-  const navHtml = `
-    <div style="display:flex;gap:8px;margin:12px 0;flex-wrap:wrap;">
-      <button class="btn btn-sm btn-var-step" data-delta="-1" ${v.step === 0 ? "disabled" : ""}>&#9664; Prev Move</button>
-      <button class="btn btn-sm btn-primary btn-var-step" data-delta="1" ${v.step >= totalMoves ? "disabled" : ""}>Next Move &#9654;</button>
-      <button class="btn btn-sm btn-danger-soft btn-var-exit">&#10005; Back to Game</button>
-    </div>
-  `;
-
-  // 4. Positional White-Box breakdown
-  const wbHtml = cached.whitebox ? whiteBoxDetails(cached.whitebox) : "";
+  const stepDesc = v.step === 0
+    ? `Starting position (0 of ${totalMoves} moves)`
+    : `Move ${v.step} of ${totalMoves}: ${curMove ? curMove.san : ""}`;
 
   return {
-    cls: `tp-${badgeCls}`,
+    cls: "",
     html: `
-      <h2><span class="verdict ${badgeCls}">${badgeText}</span>${esc(v.label)}</h2>
-      <div class="sub">${stepTitle}</div>
-      ${navHtml}
-      ${commentaryHtml}
-      ${wbHtml}
-    `
+      <div class="badge-group">
+        <span class="move-badge ${badgeCls}">${badgeText}</span>
+        <span class="small muted">${stepDesc}</span>
+      </div>
+      <div class="coach-explanation">
+        <p>Line: <strong>${esc(v.label)}</strong></p>
+        <p style="margin-top:4px;">Stockfish eval: <strong>${esc(cached.eval_str || "evaluating…")}</strong></p>
+      </div>
+      <div class="coach-action-row">
+        <button class="btn-coach-action" onclick="stepVariation(-1)">◀ Prev</button>
+        <button class="btn-coach-action primary" onclick="toggleAutoPlay(1100)">▶ Auto-play</button>
+        <button class="btn-coach-action" onclick="stepVariation(1)">Next ▶</button>
+        <button class="btn-coach-action btn-danger-soft" onclick="exitVariation()">✕ Exit to Game</button>
+      </div>
+    `,
   };
 }
 
@@ -1105,7 +951,9 @@ function renderNote() {
   bindLineButtons(el);
   el.querySelectorAll(".habit-link").forEach((a) => (a.onclick = () => jumpToPly(parseInt(a.dataset.ply, 10))));
   if (currentKey !== lastRenderedNoteKey) {
-    document.querySelector(".note-scroll").scrollTop = 0;
+    const pane = document.getElementById("paneCoach");
+    if (pane) pane.scrollTop = 0;
+    if (el) el.scrollTop = 0;
     lastRenderedNoteKey = currentKey;
   }
 }
@@ -1143,26 +991,53 @@ function bindLineButtons(root) {
   }
 }
 
-/* ---------------- Move list & graph ---------------- */
+/* ---------------- Move list (Chess.com Notation style) ---------------- */
 function renderMoveList() {
   const el = document.getElementById("moveList");
+  if (!el || !state.game) return;
+  const plies = state.game.plies || [];
   let html = "";
-  const plies = state.game.plies;
-  for (let i = 0; i < plies.length; i++) {
-    const p = plies[i];
-    if (p.color === "white" || i === 0) {
-      html += `<span class="ml-num">${p.move_number}.</span>`;
-      if (p.color === "black") html += `<span></span>`;
+
+  for (let i = 0; i < plies.length; i += 2) {
+    const whitePly = plies[i];
+    const blackPly = plies[i + 1] || null;
+    const moveNum = whitePly.move_number || Math.floor(i / 2) + 1;
+
+    const tpW = state.tpByPly[whitePly.ply];
+    const dotW = tpW ? `<span class="move-dot ${tpW.severity}"></span>` : "";
+
+    let blackCellHtml = "";
+    if (blackPly) {
+      const tpB = state.tpByPly[blackPly.ply];
+      const dotB = tpB ? `<span class="move-dot ${tpB.severity}"></span>` : "";
+      blackCellHtml = `
+        <span class="move-cell" data-ply="${blackPly.ply}">
+          <span>${esc(blackPly.san)}</span>
+          ${dotB}
+        </span>`;
+    } else {
+      blackCellHtml = `<span></span>`;
     }
-    const tp = state.tpByPly[p.ply];
-    html += `<span class="ml-move" data-ply="${p.ply}">${esc(p.san)}${tp ? `<span class="ml-dot ${tp.severity}"></span>` : ""}</span>`;
+
+    html += `
+      <div class="move-sheet-row">
+        <span class="move-sheet-num">${moveNum}.</span>
+        <span class="move-cell" data-ply="${whitePly.ply}">
+          <span>${esc(whitePly.san)}</span>
+          ${dotW}
+        </span>
+        ${blackCellHtml}
+      </div>`;
   }
+
   el.innerHTML = html;
-  el.querySelectorAll(".ml-move").forEach((m) => (m.onclick = () => jumpToPly(parseInt(m.dataset.ply, 10))));
+  el.querySelectorAll(".move-cell").forEach((m) => {
+    m.onclick = () => jumpToPly(parseInt(m.dataset.ply, 10));
+  });
 }
 
 function highlightMoveList() {
-  document.querySelectorAll(".ml-move").forEach((m) => {
+  document.querySelectorAll(".move-cell").forEach((m) => {
     const on = parseInt(m.dataset.ply, 10) === state.plyIndex;
     m.classList.toggle("active", on);
     if (on) m.scrollIntoView({ block: "nearest" });
@@ -1171,19 +1046,20 @@ function highlightMoveList() {
 
 function renderEvalGraph() {
   const svg = document.getElementById("evalGraph");
-  const plies = state.game.plies;
-  const W = 600, H = 60, n = plies.length || 1;
+  if (!svg || !state.game) return;
+  const plies = state.game.plies || [];
+  const W = 600, H = 80, n = plies.length || 1;
   const pts = [`0,${H / 2}`, ...plies.map((p, i) => `${(((i + 1) / n) * W).toFixed(1)},${(H - p.win_prob_white * H).toFixed(1)}`)];
   const markers = (state.game.turning_points || []).map((tp) => {
     const p = plies[tp.ply - 1];
-    const col = tp.severity === "blunder" ? "#e2574c" : tp.severity === "mistake" ? "#e0a83a" : "#6ea8e8";
-    return `<circle cx="${((tp.ply / n) * W).toFixed(1)}" cy="${(H - p.win_prob_white * H).toFixed(1)}" r="4" fill="${col}"/>`;
+    const col = tp.severity === "blunder" ? "#fa412d" : tp.severity === "mistake" ? "#e6912c" : "#f0c15c";
+    return `<circle cx="${((tp.ply / n) * W).toFixed(1)}" cy="${(H - p.win_prob_white * H).toFixed(1)}" r="4.5" fill="${col}"/>`;
   }).join("");
   svg.innerHTML = `
-    <polygon points="0,${H} ${pts.join(" ")} ${W},${H}" fill="rgba(244,241,234,0.85)"/>
-    <line x1="0" y1="${H / 2}" x2="${W}" y2="${H / 2}" stroke="#6b665d" stroke-dasharray="3,3"/>
+    <polygon points="0,${H} ${pts.join(" ")} ${W},${H}" fill="rgba(129, 182, 76, 0.4)"/>
+    <line x1="0" y1="${H / 2}" x2="${W}" y2="${H / 2}" stroke="#4e4b44" stroke-dasharray="3,3"/>
     ${markers}
-    <line id="graphCursor" x1="0" y1="0" x2="0" y2="${H}" stroke="#6ea8e8" stroke-width="2"/>`;
+    <line id="graphCursor" x1="0" y1="0" x2="0" y2="${H}" stroke="#5c8bb0" stroke-width="2"/>`;
   svg.onclick = (ev) => {
     const rect = svg.getBoundingClientRect();
     jumpToPly(Math.round(((ev.clientX - rect.left) / rect.width) * n));
@@ -1195,6 +1071,69 @@ function moveGraphCursor() {
   if (!cur || !state.game) return;
   const x = ((state.plyIndex / (state.game.plies.length || 1)) * 600).toFixed(1);
   cur.setAttribute("x1", x); cur.setAttribute("x2", x);
+}
+
+function renderAnalysisTab() {
+  if (!state.game) return;
+  const summaryEl = document.getElementById("gameSummaryStats");
+  if (summaryEl) {
+    const tps = state.game.turning_points || [];
+    const blunders = tps.filter((t) => t.severity === "blunder").length;
+    const mistakes = tps.filter((t) => t.severity === "mistake").length;
+    const inaccuracies = tps.filter((t) => t.severity === "inaccuracy").length;
+    const acc = state.game.summary?.accuracy_pct ? `${state.game.summary.accuracy_pct}%` : "—";
+
+    summaryEl.innerHTML = `
+      <div class="stat-card">
+        <span class="stat-card-title">Accuracy</span>
+        <span class="stat-card-val" style="color:var(--good);">${acc}</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-card-title">Blunders</span>
+        <span class="stat-card-val" style="color:var(--danger);">${blunders}</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-card-title">Mistakes</span>
+        <span class="stat-card-val" style="color:var(--warn);">${mistakes}</span>
+      </div>
+      <div class="stat-card">
+        <span class="stat-card-title">Inaccuracies</span>
+        <span class="stat-card-val" style="color:#f0c15c;">${inaccuracies}</span>
+      </div>
+    `;
+  }
+
+  renderEvalGraph();
+
+  const wbEl = document.getElementById("whiteBoxAnalysis");
+  if (wbEl) {
+    const ply = currentPly();
+    const tp = ply ? state.tpByPly[ply.ply] : null;
+    const currentFen = getCurrentFen();
+    const cached = fenEvalCache.get(currentFen) || {};
+    const wb = tp?.whitebox?.root || cached.whitebox || ply?.whitebox_after;
+    if (wb) {
+      wbEl.innerHTML = `<div class="chart-title" style="margin-top:6px;">Positional Breakdown (Move ${state.plyIndex})</div>` + whiteBoxRows(wb);
+    } else {
+      wbEl.innerHTML = `<div class="small muted" style="margin-top:6px;">Step through moves to inspect positional factors.</div>`;
+    }
+  }
+}
+
+function setupTabs() {
+  document.querySelectorAll(".tab-btn").forEach((btn) => {
+    btn.onclick = () => {
+      document.querySelectorAll(".tab-btn").forEach((b) => b.classList.remove("active"));
+      document.querySelectorAll(".tab-pane").forEach((p) => p.classList.add("hidden"));
+      btn.classList.add("active");
+      const targetPane = document.getElementById(btn.dataset.tab);
+      if (targetPane) {
+        targetPane.classList.remove("hidden");
+        if (btn.dataset.tab === "paneAnalysis") renderAnalysisTab();
+        if (btn.dataset.tab === "paneMoves") highlightMoveList();
+      }
+    };
+  });
 }
 
 /* ---------------- Q&A ---------------- */
@@ -1728,6 +1667,7 @@ function renderAll() {
   renderVariationBanner();
   highlightMoveList();
   moveGraphCursor();
+  renderAnalysisTab();
 }
 
 /* ---------------- Data Loading ---------------- */
@@ -1806,6 +1746,7 @@ async function pollEngineStatus() {
 
 /* ---------------- Event Wiring ---------------- */
 window.addEventListener("DOMContentLoaded", async () => {
+  setupTabs();
   pollEngineStatus();
   await refreshSettings();
   await loadGameList();
