@@ -1045,29 +1045,36 @@ function renderOrdinaryNote(ply) {
 }
 
 function renderSummaryNote() {
-  const s = state.game.summary;
-  const ps = s.phase_summary || {};
-  const habits = (s.top_habits || []).map((h) => {
-    const links = h.moves.map((m) => {
-      const tp = state.game.turning_points.find((t) => `${t.move_number}. ${t.played_san}` === m);
-      return tp ? `<a class="habit-link" data-ply="${tp.ply}">${esc(m)}</a>` : esc(m);
-    }).join(", ");
-    return `<div class="habit"><div class="habit-title">${esc(h.title)}</div>
-      <div class="small">${links}</div>
-      <div class="small" style="margin-top:4px"><strong>When</strong> ${esc(h.otb_signal.charAt(0).toLowerCase() + h.otb_signal.slice(1))} <strong>&rarr;</strong> ${esc(h.otb_action)}</div></div>`;
-  }).join("");
+  const s = state.game.summary || {};
+  const tps = state.game.turning_points || [];
+  const firstTp = tps[0];
+  const blunders = tps.filter((t) => t.severity === "blunder").length;
+  const mistakes = tps.filter((t) => t.severity === "mistake").length;
+  const inaccuracies = tps.filter((t) => t.severity === "inaccuracy").length;
+
   return {
     cls: "",
-    html: `<h2>Game summary</h2>
-      <div class="stat-row">
-        <div class="stat"><div class="k">Accuracy</div><div class="v">${s.accuracy_pct}%</div></div>
-        <div class="stat"><div class="k">Opening</div><div class="v">${ps.Opening?.accuracy ?? "–"}%</div></div>
-        <div class="stat"><div class="k">Middlegame</div><div class="v">${ps.Middlegame?.accuracy ?? "–"}%</div></div>
-        <div class="stat"><div class="k">Endgame</div><div class="v">${ps.Endgame?.accuracy ?? "–"}%</div></div>
+    html: `
+      <div class="badge-group">
+        <span class="move-badge badge-best">Game Review Ready</span>
       </div>
-      <h4>Habits to work on</h4>
-      ${habits || "<p>No recurring issues found.</p>"}
-      <p class="muted small" style="margin-top:12px">Use &#9654; / &rarr; to step through the game, or pick up any piece on the board to test moves! Coloured dots in the move list mark key moments.</p>`,
+      <div class="coach-explanation">
+        <p style="font-size:15px; font-weight:600;">Welcome to your Game Review!</p>
+        <p style="margin-top:6px;">Your estimated accuracy: <strong style="color:var(--good); font-size:16px;">${s.accuracy_pct || "—"}%</strong></p>
+        <p style="margin-top:6px; color:var(--muted); font-size:13.5px;">Found <strong>${blunders}</strong> blunders, <strong>${mistakes}</strong> mistakes, and <strong>${inaccuracies}</strong> inaccuracies.</p>
+      </div>
+      <div class="coach-action-row" style="margin-top:8px;">
+        ${firstTp ? `
+          <button class="btn-coach-action primary" onclick="jumpToPly(${firstTp.ply})">
+            ▶ Start Game Review (First key move: ${firstTp.move_number}. ${firstTp.played_san})
+          </button>
+        ` : `
+          <button class="btn-coach-action primary" onclick="jumpToPly(1)">
+            ▶ Step Through Game
+          </button>
+        `}
+      </div>
+    `,
   };
 }
 
