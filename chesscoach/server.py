@@ -86,6 +86,7 @@ class QARequest(BaseModel):
     fen_before: str | None = None
     ply_meta: dict[str, Any] | None = None
     perspective: str = "white"
+    history: list[dict[str, str]] = []
 
 
 class EvalRequest(BaseModel):
@@ -206,6 +207,7 @@ def ask_coach(req: QARequest) -> dict[str, Any]:
                 fen_before=req.fen_before,
                 ply_meta=req.ply_meta,
                 perspective_str=req.perspective,
+                history=req.history,
                 settings=LLMSettings.load(),
             )
         except Exception:
@@ -218,6 +220,7 @@ def ask_coach(req: QARequest) -> dict[str, Any]:
                     fen_before=req.fen_before,
                     ply_meta=req.ply_meta,
                     perspective_str=req.perspective,
+                    history=req.history,
                     settings=LLMSettings.load(),
                 )
             except Exception as retry_exc:

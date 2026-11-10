@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ChessCoach</title>
   <link rel="icon" type="image/png" href="/assets/icon.png" />
-  <link rel="stylesheet" href="/static/styles.css?v=3" />
+  <link rel="stylesheet" href="/static/styles.css?v=4" />
 </head>
 <body>
   <header class="topbar">
@@ -51,39 +51,94 @@
       <div class="board-controls">
         <button id="btnFirst" class="btn btn-icon" title="Start (Home)">&#9198;</button>
         <button id="btnPrev" class="btn btn-icon" title="Previous (Left Arrow)">&#9664;</button>
-        <button id="btnNext" class="btn btn-icon" title="Next (Right Arrow)">&#9654;</button>
+        <button id="btnNext" class="btn btn-icon" title="Next (Right Arrow)">Next &#9654;</button>
         <button id="btnLast" class="btn btn-icon" title="End (End)">&#9197;</button>
         <button id="btnFlip" class="btn btn-icon" title="Flip board">&#8645;</button>
       </div>
-
-      <svg id="evalGraph" class="eval-graph" viewBox="0 0 600 60" preserveAspectRatio="none"></svg>
     </section>
 
-    <!-- SIDE PANEL -->
+    <!-- SIDE PANEL (Chess.com Tabbed Layout) -->
     <section class="side-col">
-      <div class="move-header">
-        <span id="currentMoveLabel" class="move-title">Start position</span>
-        <span id="currentEvalLabel" class="eval-pill">0.00</span>
+      <!-- SIDE TAB BAR -->
+      <div class="side-tab-bar">
+        <button id="tabBtnCoach" class="tab-btn active" data-tab="paneCoach">
+          <span class="tab-icon">🎯</span> Coach
+        </button>
+        <button id="tabBtnMoves" class="tab-btn" data-tab="paneMoves">
+          <span class="tab-icon">📋</span> Moves
+        </button>
+        <button id="tabBtnAnalysis" class="tab-btn" data-tab="paneAnalysis">
+          <span class="tab-icon">📊</span> Analysis
+        </button>
       </div>
 
-      <div id="moveList" class="move-list"></div>
+      <!-- TAB PANE 1: COACH -->
+      <div id="paneCoach" class="tab-pane active">
+        <!-- Move Summary Card -->
+        <div class="coach-move-card">
+          <div class="coach-move-header">
+            <span id="currentMoveLabel" class="move-title">Start position</span>
+            <span id="currentEvalLabel" class="eval-pill">0.00</span>
+          </div>
+          <div id="noteContent" class="note-body"></div>
+        </div>
 
-      <div class="note-scroll">
-        <div id="noteContent" class="note"></div>
-
-        <div class="ask-section">
-          <div class="ask-title">Ask the coach about this position</div>
-          <div id="qaSuggestions" class="qa-suggestions"></div>
+        <!-- Coach Conversation -->
+        <div class="coach-chat-card">
+          <div class="chat-header">
+            <div class="chat-title-row">
+              <span class="chat-title">&#128172; Coach Conversation</span>
+              <div class="chat-controls">
+                <button id="btnVoiceMode" type="button" class="btn btn-xs btn-voice-mode" title="Toggle hands-free two-way voice conversation">
+                  &#127908; Voice Mode: OFF
+                </button>
+                <button id="btnVoiceToggle" type="button" class="btn btn-xs btn-voice muted" title="Voice read-aloud: OFF (Click to unmute)">
+                  &#128263;
+                </button>
+                <button id="btnClearChat" type="button" class="btn btn-xs btn-ghost" title="Clear conversation for this position">
+                  &#128465;
+                </button>
+              </div>
+            </div>
+            <div id="voiceStatusBanner" class="voice-status-banner hidden">
+              <span class="voice-status-indicator pulse-dot"></span>
+              <span id="voiceStatusText" class="voice-status-text">Listening...</span>
+              <button id="btnVoiceStop" type="button" class="btn btn-xs btn-danger-soft">Stop</button>
+            </div>
+            <div id="qaSuggestions" class="qa-suggestions"></div>
+          </div>
           <div id="qaMessages" class="qa-messages"></div>
+          <form id="qaForm" class="qa-input-row">
+            <button id="btnMic" type="button" class="btn btn-icon btn-mic" title="Talk to coach (Click to speak)">&#127908;</button>
+            <input id="qaInput" type="text" placeholder="Talk with coach, test a move, or ask why... (or click &#127908;)" autocomplete="off" />
+            <button id="btnAsk" type="submit" class="btn btn-primary">Send</button>
+          </form>
         </div>
       </div>
 
-      <form id="qaForm" class="qa-input-row">
-        <button id="btnMic" type="button" class="btn btn-icon btn-mic" title="Talk to coach (Click to speak)">&#127908;</button>
-        <input id="qaInput" type="text" placeholder="e.g. What if I played f4 instead? (or click 🎤 to talk)" autocomplete="off" />
-        <button id="btnAsk" type="submit" class="btn btn-primary">Ask</button>
-        <button id="btnVoiceToggle" type="button" class="btn btn-icon btn-voice muted" title="Voice read-aloud: OFF (Click to unmute)">&#128263;</button>
-      </form>
+      <!-- TAB PANE 2: MOVES -->
+      <div id="paneMoves" class="tab-pane hidden">
+        <div class="moves-container">
+          <div class="moves-header-row">
+            <span>#</span>
+            <span>White</span>
+            <span>Black</span>
+          </div>
+          <div id="moveList" class="move-sheet"></div>
+        </div>
+      </div>
+
+      <!-- TAB PANE 3: ANALYSIS -->
+      <div id="paneAnalysis" class="tab-pane hidden">
+        <div class="analysis-container">
+          <div id="gameSummaryStats" class="game-summary-stats"></div>
+          <div class="eval-chart-box">
+            <div class="chart-title">Advantage Flow Chart</div>
+            <svg id="evalGraph" class="eval-graph" viewBox="0 0 600 80" preserveAspectRatio="none"></svg>
+          </div>
+          <div id="whiteBoxAnalysis" class="whitebox-analysis"></div>
+        </div>
+      </div>
     </section>
   </main>
 
@@ -148,8 +203,8 @@
     </div>
   </div>
 
-  <script src="/static/pieces.js?v=3"></script>
-  <script src="/static/chess.min.js?v=3"></script>
-  <script src="/static/app.js?v=3"></script>
+  <script src="/static/pieces.js?v=4"></script>
+  <script src="/static/chess.min.js?v=4"></script>
+  <script src="/static/app.js?v=4"></script>
 </body>
 </html>

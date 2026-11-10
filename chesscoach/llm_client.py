@@ -37,6 +37,7 @@ def call_grounded_llm(
     user_prompt: str,
     settings: LLMSettings | None = None,
     system_prompt: str = COACH_SYSTEM_PROMPT,
+    history: list[dict[str, str]] | None = None,
     timeout_sec: float = 25.0,
 ) -> str | None:
     """Call configured LLM provider or return None if deterministic/unavailable."""
@@ -46,6 +47,7 @@ def call_grounded_llm(
 
     prov = cfg.provider.lower()
     api_key = cfg.api_key.strip()
+    hist = history or []
 
     try:
         with httpx.Client(timeout=timeout_sec) as client:
@@ -55,9 +57,15 @@ def call_grounded_llm(
                     f"https://generativelanguage.googleapis.com/v1beta/models/"
                     f"{model}:generateContent?key={api_key}"
                 )
+                contents: list[dict[str, Any]] = []
+                for h in hist:
+                    r = "user" if h.get("role") == "user" else "model"
+                    contents.append({"role": r, "parts": [{"text": h.get("content", "")}]})
+                contents.append({"role": "user", "parts": [{"text": user_prompt}]})
+
                 payload: dict[str, Any] = {
                     "system_instruction": {"parts": [{"text": system_prompt}]},
-                    "contents": [{"role": "user", "parts": [{"text": user_prompt}]}],
+                    "contents": contents,
                     "generationConfig": {"temperature": 0.35, "maxOutputTokens": 1200},
                 }
                 resp = client.post(url, json=payload)
@@ -76,13 +84,16 @@ def call_grounded_llm(
                     "Authorization": f"Bearer {api_key}",
                     "Content-Type": "application/json",
                 }
+                msgs: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
+                for h in hist:
+                    r = "user" if h.get("role") == "user" else "assistant"
+                    msgs.append({"role": r, "content": h.get("content", "")})
+                msgs.append({"role": "user", "content": user_prompt})
+
                 payload = {
                     "model": model,
                     "temperature": 0.35,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
+                    "messages": msgs,
                 }
                 resp = client.post(url, headers=headers, json=payload)
                 resp.raise_for_status()
@@ -97,12 +108,18 @@ def call_grounded_llm(
                     "anthropic-version": "2023-06-01",
                     "content-type": "application/json",
                 }
+                msgs: list[dict[str, str]] = []
+                for h in hist:
+                    r = "user" if h.get("role") == "user" else "assistant"
+                    msgs.append({"role": r, "content": h.get("content", "")})
+                msgs.append({"role": "user", "content": user_prompt})
+
                 payload = {
                     "model": model,
                     "max_tokens": 1200,
                     "temperature": 0.35,
                     "system": system_prompt,
-                    "messages": [{"role": "user", "content": user_prompt}],
+                    "messages": msgs,
                 }
                 resp = client.post(url, headers=headers, json=payload)
                 resp.raise_for_status()
@@ -114,13 +131,16 @@ def call_grounded_llm(
                 model = cfg.model.strip() or "llama3.1"
                 base = (cfg.base_url.strip() or "http://localhost:11434").rstrip("/")
                 url = f"{base}/api/chat"
+                msgs: list[dict[str, str]] = [{"role": "system", "content": system_prompt}]
+                for h in hist:
+                    r = "user" if h.get("role") == "user" else "assistant"
+                    msgs.append({"role": r, "content": h.get("content", "")})
+                msgs.append({"role": "user", "content": user_prompt})
+
                 payload = {
                     "model": model,
                     "stream": False,
-                    "messages": [
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_prompt},
-                    ],
+                    "messages": msgs,
                 }
                 resp = client.post(url, json=payload)
                 resp.raise_for_status()

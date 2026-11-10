@@ -767,82 +767,50 @@ function whiteBoxDetails(wb) {
 }
 
 function renderTurningPointNote(ply, tp) {
-  const c = tp.coaching;
-  const [problem, problemStructure] = splitOnce(c.why_it_backfired, "Structurally at the end");
-  let [better, doubt] = splitOnce(c.why_best_works, "**Answering the OTB Doubt:**");
-  const [betterMain, betterStructure] = splitOnce(better, "Positionally, this line achieves");
-  doubt = doubt.replace("**Answering the OTB Doubt:**", "").replace("Why couldn't Black punish this? Because ", "").replace("Why couldn't White punish this? Because ", "");
-
+  const c = tp.coaching || {};
   const refUci = [tp.played_uci, ...(tp.refutation_pv_uci || []).slice(0, 6)];
   const bestUci = (tp.candidates[0]?.pv_uci || []).slice(0, 7);
-  const bestSanPv = tp.candidates[0]?.pv_formatted || tp.best_san;
-  const refSanPv = tp.refutation_pv_formatted || tp.played_san;
 
-  const cfCards = (tp.counterfactual_replies_to_best || []).map((cf) => {
-    const fullUci = [tp.best_uci, cf.opponent_try_uci, ...(cf.continuation_uci || [])];
-    const preview = cf.continuation_formatted || `${cf.opponent_try_san} ${cf.refutation_san}!`;
-    return `
-      <div class="line-box">
-        <div class="line-box-info">
-          <div class="line-box-title">If ${esc(cf.opponent_try_san)} &rarr; ${esc(cf.refutation_san)}!</div>
-          <div class="line-box-preview">${esc(preview)}</div>
-        </div>
-        <button class="btn-play-line counterfactual" data-fen="${esc(tp.fen_before)}" data-uci='${JSON.stringify(fullUci)}' data-label="If ${esc(cf.opponent_try_san)} vs ${esc(tp.best_san)}" data-kind="counterfactual" data-tp-ply="${tp.ply}">
-          &#9654; Play on board
-        </button>
-      </div>`;
-  }).join("");
+  const badgeIcon = tp.severity === "blunder" ? "?? Blunder" : tp.severity === "mistake" ? "? Mistake" : "⁈ Inaccuracy";
+  const badgeCls = `badge-${tp.severity}`;
+
+  const intent = c.your_likely_intent || "";
+  const backfire = c.why_it_backfired ? c.why_it_backfired.split("Structurally at the end")[0].trim() : "";
+  const whyBest = c.why_best_works ? c.why_best_works.split("**Answering the OTB Doubt:**")[0].split("Positionally, this line achieves")[0].trim() : "";
 
   return {
     cls: `tp-${tp.severity}`,
     html: `
-      <h2><span class="verdict ${tp.severity}">${tp.severity.toUpperCase()}</span>${esc(movePrefix(ply) + ply.san)}</h2>
-      <div class="sub">Better was <code>${esc(tp.best_san)}</code> (${esc(tp.best_eval_white_str)} instead of ${esc(tp.played_eval_white_str)}) &middot; ${esc(tp.root_cause_title)}</div>
+      <div class="badge-group">
+        <span class="move-badge ${badgeCls}">${badgeIcon}</span>
+        <span class="small muted">${(tp.wp_loss * 100).toFixed(1)}% win chance lost</span>
+      </div>
 
-      <div style="margin: 8px 0 12px; display: flex; gap: 8px; flex-wrap: wrap;">
-        <button class="btn btn-sm btn-play-line" data-fen="${esc(tp.fen_before)}" data-uci='[]' data-label="Decision before ${esc(ply.san)}" data-kind="try_moves" data-tp-ply="${tp.ply}">
-          &#8630; Reset to before ${esc(ply.san)} (Try your moves)
+      <div class="coach-explanation">
+        <p>You played <strong>${esc(ply.san)}</strong> (${esc(tp.played_eval_white_str)}). ${inlineMd(intent)}</p>
+        <p style="margin-top:6px;">However, this was a ${tp.severity}: ${inlineMd(backfire)}</p>
+        <p style="margin-top:6px; color:#a8d88a;">Best was <strong>${esc(tp.best_san)}</strong> (${esc(tp.best_eval_white_str)}). ${inlineMd(whyBest)}</p>
+      </div>
+
+      <div class="coach-action-row">
+        <button class="btn-coach-action primary btn-play-line" data-fen="${esc(tp.fen_before)}" data-uci='${JSON.stringify(bestUci)}' data-label="Best Line: ${esc(tp.best_san)}" data-kind="best" data-tp-ply="${tp.ply}">
+          ⭐ Show Best Move (${esc(tp.best_san)})
+        </button>
+        <button class="btn-coach-action btn-play-line" data-fen="${esc(tp.fen_before)}" data-uci='[]' data-label="Decision before ${esc(ply.san)}" data-kind="try_moves" data-tp-ply="${tp.ply}">
+          ⟲ Retry Move
+        </button>
+        <button class="btn-coach-action btn-play-line refutation" data-fen="${esc(tp.fen_before)}" data-uci='${JSON.stringify(refUci)}' data-label="Refutation: ${esc(ply.san)}" data-kind="refutation" data-tp-ply="${tp.ply}">
+          ⚡ Punishment Line
         </button>
       </div>
 
-      <h4>What you were going for</h4>
-      <p>${inlineMd(c.your_likely_intent)}</p>
-
-      <h4>What went wrong</h4>
-      <p>${inlineMd(problem)}</p>
-      <div class="line-box">
-        <div class="line-box-info">
-          <div class="line-box-title">The Refutation Line</div>
-          <div class="line-box-preview">${esc(refSanPv)}</div>
-        </div>
-        <button class="btn-play-line refutation" data-fen="${esc(tp.fen_before)}" data-uci='${JSON.stringify(refUci)}' data-label="Refutation of ${esc(ply.san)}" data-kind="refutation" data-tp-ply="${tp.ply}">
-          &#9654; Play on board
-        </button>
-      </div>
-
-      <h4>Why ${esc(tp.best_san)} is better</h4>
-      <p>${inlineMd(betterMain)}</p>
-      <div class="line-box">
-        <div class="line-box-info">
-          <div class="line-box-title">Recommended Best Line</div>
-          <div class="line-box-preview">${esc(bestSanPv)}</div>
-        </div>
-        <button class="btn-play-line" data-fen="${esc(tp.fen_before)}" data-uci='${JSON.stringify(bestUci)}' data-label="Best Line: ${esc(tp.best_san)}" data-kind="best" data-tp-ply="${tp.ply}">
-          &#9654; Play on board
-        </button>
-      </div>
-
-      ${doubt ? `<h4>"But what if they…"</h4><p>${inlineMd(doubt.charAt(0).toUpperCase() + doubt.slice(1))}</p>` : ""}
-      ${cfCards}
-
-      <div class="takeaway"><strong>Take-away for future games:</strong> when ${esc(c.otb_trigger.signal.charAt(0).toLowerCase() + c.otb_trigger.signal.slice(1))} &rarr; ${esc(c.otb_trigger.action)}</div>
-
-      <details class="more"><summary>Engine & Positional details</summary><div class="more-body">
-        ${problemStructure ? `<p>${inlineMd(problemStructure)}</p>` : ""}
-        ${betterStructure ? `<p>${inlineMd(betterStructure)}</p>` : ""}
-        <p class="small muted">Win-chance lost: ${(tp.wp_loss * 100).toFixed(1)}% &middot; Refutation appears at depth ${tp.depth_curve.crossover_depth} &middot; ${esc(tp.singularity.replace(/_/g, " ").toLowerCase())} &middot; Threat: ${esc(tp.null_threat.threat_diagnosis.replace(/_/g, " ").toLowerCase())}</p>
-      </div></details>
-      ${whiteBoxDetails(tp.whitebox.root)}
+      ${c.otb_trigger ? `
+        <details class="more" style="margin-top:8px;"><summary style="cursor:pointer; color:var(--muted); font-size:12px;">Coach takeaway rule</summary>
+          <div style="margin-top:6px; font-size:13px; color:var(--text); background:var(--panel-2); padding:8px 10px; border-radius:6px; border:1px solid var(--border);">
+            <strong>Rule:</strong> When ${esc(c.otb_trigger.signal.toLowerCase())} &rarr; <strong>${esc(c.otb_trigger.action)}</strong>
+          </div>
+        </details>
+      ` : ""}
     `,
   };
 }
@@ -1044,22 +1012,35 @@ function renderVariationNote(v) {
 
 function renderOrdinaryNote(ply) {
   const mine = ply.color === state.game.player_color;
-  let verdict;
+  let badgeHtml = "";
+  let commentHtml = "";
+
   if (!mine) {
-    verdict = `<div class="sub">Opponent's move &middot; eval ${esc(ply.eval_white_str)}</div>`;
+    badgeHtml = `<span class="move-badge badge-book">Opponent's Move</span>`;
+    commentHtml = `<p>Opponent played <strong>${esc(ply.san)}</strong>. Evaluation: <strong>${esc(ply.eval_white_str)}</strong>.</p>`;
   } else if (ply.san === ply.best_before_san || ply.severity === "best") {
-    verdict = `<p><span class="verdict good">BEST</span>The engine's top choice.</p>`;
+    badgeHtml = `<span class="move-badge badge-best">★ Best Move</span>`;
+    commentHtml = `<p>You played <strong>${esc(ply.san)}</strong>! This is the engine's top choice (Eval: <strong>${esc(ply.eval_white_str)}</strong>).</p>`;
   } else if (ply.severity === "good") {
-    verdict = `<p><span class="verdict good">GOOD</span>Solid move. The engine slightly preferred <code>${esc(ply.best_before_san)}</code>, but the difference is small.</p>`;
+    badgeHtml = `<span class="move-badge badge-good">✓ Good Move</span>`;
+    commentHtml = `<p>Solid move. You played <strong>${esc(ply.san)}</strong>. Keeps a solid position (Eval: <strong>${esc(ply.eval_white_str)}</strong>).</p>`;
   } else {
-    verdict = `<p><span class="verdict ${ply.severity}">${ply.severity.toUpperCase()}</span>The engine preferred <code>${esc(ply.best_before_san)}</code>.</p>`;
+    badgeHtml = `<span class="move-badge badge-good">Playable Move</span>`;
+    commentHtml = `<p>You played <strong>${esc(ply.san)}</strong>. The engine slightly preferred <code>${esc(ply.best_before_san || "")}</code>.</p>`;
   }
+
   const nextTp = (state.game.turning_points || []).find((t) => t.ply > ply.ply);
+
   return {
     cls: "",
-    html: `${verdict}
-      ${nextTp ? `<p class="muted small" style="margin-top:10px">Next key moment: <a class="habit-link" data-ply="${nextTp.ply}" style="color:var(--blue);cursor:pointer">move ${nextTp.move_number} (${esc(nextTp.played_san)})</a></p>` : ""}
-      ${whiteBoxDetails(ply.whitebox_after)}`,
+    html: `
+      <div class="badge-group">${badgeHtml}</div>
+      <div class="coach-explanation">${commentHtml}</div>
+      <div class="coach-action-row">
+        <button class="btn-coach-action" onclick="jumpToPly(${state.plyIndex + 1})">Next Move ▶</button>
+        ${nextTp ? `<button class="btn-coach-action primary" onclick="jumpToPly(${nextTp.ply})">Jump to Key Moment (Move ${nextTp.move_number}) ⚡</button>` : ""}
+      </div>
+    `,
   };
 }
 
@@ -1238,135 +1219,341 @@ function renderQA() {
   sug.querySelectorAll(".chip-q").forEach((c) => (c.onclick = () => askCoach(c.textContent)));
 }
 
-let voiceEnabled = false;
+/* ---------------- Conversational Coach & Voice Dialogue ---------------- */
+let voiceNarrationEnabled = true; // Speech synthesis active by default
+let voiceModeActive = false;      // Two-way hands-free continuous dialogue
+let recognitionInstance = null;
+let isCurrentlyListening = false;
+let isCoachCurrentlySpeaking = false;
 
-function cleanMarkdownForSpeech(md) {
-  if (!md) return "";
-  return md
-    .replace(/###/g, "")
-    .replace(/\*\*/g, "")
-    .replace(/\*/g, "")
-    .replace(/`([^`]+)`/g, "$1")
-    .replace(/\[.*?\]\(.*?\)/g, "")
-    .replace(/[-+]\d+\.?\d*(?:\s*cp|\s*%)?/g, "")
-    .replace(/\n+/g, ". ")
-    .trim();
-}
-
-function speakExplanation(md) {
-  if (!window.speechSynthesis) return;
-  try {
-    window.speechSynthesis.cancel();
-    const clean = cleanMarkdownForSpeech(md);
-    if (!clean) return;
-    const utter = new SpeechSynthesisUtterance(clean);
-    utter.rate = 1.0;
-    utter.pitch = 1.0;
-    window.speechSynthesis.speak(utter);
-  } catch (err) {
-    console.warn("Speech synthesis error:", err);
+function getConversationKey() {
+  if (state.variation) {
+    return `var_${state.variation.label}_${state.variation.step}`;
   }
+  const ply = currentPly();
+  return ply ? `ply_${ply.ply}` : "start";
 }
 
-let isListening = false;
-function setupVoiceInput() {
-  const btnMic = document.getElementById("btnMic");
-  if (!btnMic) return;
-  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
-  if (!SpeechRec) {
-    btnMic.title = "Voice input is not supported in this browser window";
-    btnMic.style.opacity = "0.45";
-    btnMic.onclick = () => {
-      alert("Voice input (SpeechRecognition) is not available in this browser window. You can type in the question box!");
-    };
+function getConversationThread(key = null) {
+  const k = key || getConversationKey();
+  if (!state.conversations) state.conversations = {};
+  if (!state.conversations[k]) state.conversations[k] = [];
+  return state.conversations[k];
+}
+
+function toSpokenChessText(text) {
+  if (!text) return "";
+  let s = text;
+  // Strip markdown formatting
+  s = s.replace(/#{1,6}\s+/g, "");
+  s = s.replace(/\*\*([^*]+)\*\*/g, "$1");
+  s = s.replace(/\*([^*]+)\*/g, "$1");
+  s = s.replace(/`([^`]+)`/g, "$1");
+  s = s.replace(/\[([^\]]+)\]\([^)]+\)/g, "$1");
+  s = s.replace(/[-*]\s+/g, "");
+
+  // Castling
+  s = s.replace(/\bO-O-O\b/g, "castles queenside");
+  s = s.replace(/\bO-O\b/g, "castles kingside");
+  s = s.replace(/\b0-0-0\b/g, "castles queenside");
+  s = s.replace(/\b0-0\b/g, "castles kingside");
+
+  // Evaluations
+  s = s.replace(/\+([0-9]+\.?[0-9]*)/g, "plus $1");
+  s = s.replace(/-([0-9]+\.?[0-9]*)/g, "minus $1");
+  s = s.replace(/#0/g, "checkmate");
+  s = s.replace(/#([0-9]+)/g, "mate in $1");
+
+  // Spoken Piece Moves
+  s = s.replace(/\bK([a-h][1-8])\b/g, "King to $1");
+  s = s.replace(/\bQ([a-h][1-8])\b/g, "Queen to $1");
+  s = s.replace(/\bR([a-h1-8]?)([a-h][1-8])\b/g, "Rook $1 to $2");
+  s = s.replace(/\bB([a-h][1-8])\b/g, "Bishop to $1");
+  s = s.replace(/\bN([a-h1-8]?)([a-h][1-8])\b/g, "Knight $1 to $2");
+
+  s = s.replace(/\bKx([a-h][1-8])\b/g, "King takes $1");
+  s = s.replace(/\bQx([a-h][1-8])\b/g, "Queen takes $1");
+  s = s.replace(/\bRx([a-h][1-8])\b/g, "Rook takes $1");
+  s = s.replace(/\bBx([a-h][1-8])\b/g, "Bishop takes $1");
+  s = s.replace(/\bNx([a-h][1-8])\b/g, "Knight takes $1");
+  s = s.replace(/\b([a-h])x([a-h][1-8])\b/g, "$1 takes $2");
+
+  // Keep speech concise and pleasant for voice dialogue (first 2-3 sentences)
+  const sentences = s.split(/(?<=[.?!])\s+/).filter(Boolean);
+  if (sentences.length > 4) {
+    s = sentences.slice(0, 4).join(" ");
+  }
+
+  return s.replace(/[!?;:]+/g, ".").replace(/\s+/g, " ").trim();
+}
+
+function updateVoiceStatus(status, text = "") {
+  const banner = document.getElementById("voiceStatusBanner");
+  const textEl = document.getElementById("voiceStatusText");
+  const micBtn = document.getElementById("btnMic");
+  if (!banner || !textEl) return;
+
+  if (!status || status === "idle") {
+    banner.classList.add("hidden");
+    if (micBtn) micBtn.classList.remove("recording");
     return;
   }
 
-  const recog = new SpeechRec();
-  recog.continuous = false;
-  recog.interimResults = true;
-  recog.lang = "en-US";
-
-  function stopListening() {
-    isListening = false;
-    btnMic.classList.remove("recording");
-    btnMic.title = "Talk to coach (Click to speak)";
-    document.getElementById("qaInput").placeholder = "e.g. What if I played f4 instead? (or click 🎤 to talk)";
+  banner.classList.remove("hidden");
+  if (status === "listening") {
+    textEl.textContent = text || "Listening to you... speak now";
+    if (micBtn) micBtn.classList.add("recording");
+  } else if (status === "speaking") {
+    textEl.textContent = text || "Coach speaking...";
+    if (micBtn) micBtn.classList.remove("recording");
+  } else if (status === "thinking") {
+    textEl.textContent = text || "Analyzing position...";
+    if (micBtn) micBtn.classList.remove("recording");
   }
-
-  recog.onstart = () => {
-    isListening = true;
-    btnMic.classList.add("recording");
-    btnMic.title = "Listening... Speak your chess question!";
-    document.getElementById("qaInput").placeholder = "Listening... speak now!";
-  };
-
-  recog.onresult = (e) => {
-    let transcript = "";
-    for (let i = e.resultIndex; i < e.results.length; ++i) {
-      transcript += e.results[i][0].transcript;
-    }
-    document.getElementById("qaInput").value = transcript;
-    if (e.results[0].isFinal) {
-      stopListening();
-      askCoach(transcript);
-    }
-  };
-
-  recog.onerror = (e) => {
-    console.warn("Speech recognition error:", e.error);
-    stopListening();
-  };
-
-  recog.onend = () => {
-    stopListening();
-  };
-
-  btnMic.onclick = () => {
-    if (isListening) {
-      recog.stop();
-      stopListening();
-    } else {
-      try {
-        recog.start();
-      } catch (err) {
-        console.error("Speech recognition start failed:", err);
-      }
-    }
-  };
 }
 
-function setupVoiceToggle() {
-  const btn = document.getElementById("btnVoiceToggle");
-  if (!btn) return;
-  btn.onclick = () => {
-    voiceEnabled = !voiceEnabled;
-    if (voiceEnabled) {
-      btn.innerHTML = "&#128266;";
-      btn.classList.remove("muted");
-      btn.title = "Voice narration: ON (Click to mute)";
-    } else {
-      btn.innerHTML = "&#128263;";
-      btn.classList.add("muted");
-      btn.title = "Voice narration: OFF (Click to unmute)";
-      if (window.speechSynthesis) {
-        try { window.speechSynthesis.cancel(); } catch (e) {}
+function stopAllVoiceActivity() {
+  if (window.speechSynthesis) {
+    try { window.speechSynthesis.cancel(); } catch (_) {}
+  }
+  isCoachCurrentlySpeaking = false;
+  if (recognitionInstance && isCurrentlyListening) {
+    try { recognitionInstance.stop(); } catch (_) {}
+  }
+  isCurrentlyListening = false;
+  updateVoiceStatus("idle");
+}
+
+function speakCoachDialogue(text, onComplete = null) {
+  if (!window.speechSynthesis || (!voiceNarrationEnabled && !voiceModeActive)) {
+    if (onComplete) onComplete();
+    return;
+  }
+
+  stopAllVoiceActivity();
+  const spokenText = toSpokenChessText(text);
+  if (!spokenText) {
+    if (onComplete) onComplete();
+    return;
+  }
+
+  try {
+    const utter = new SpeechSynthesisUtterance(spokenText);
+    utter.rate = 1.05;
+    utter.pitch = 1.0;
+
+    const voices = window.speechSynthesis.getVoices();
+    const naturalVoice = voices.find(
+      (v) => v.lang.startsWith("en") && (v.name.includes("Natural") || v.name.includes("Online") || v.name.includes("David") || v.name.includes("Guy") || v.name.includes("Jenny"))
+    );
+    if (naturalVoice) utter.voice = naturalVoice;
+
+    utter.onstart = () => {
+      isCoachCurrentlySpeaking = true;
+      updateVoiceStatus("speaking", "Coach speaking...");
+    };
+
+    utter.onend = () => {
+      isCoachCurrentlySpeaking = false;
+      updateVoiceStatus("idle");
+      if (onComplete) onComplete();
+    };
+
+    utter.onerror = (err) => {
+      console.warn("Speech synthesis error:", err);
+      isCoachCurrentlySpeaking = false;
+      updateVoiceStatus("idle");
+      if (onComplete) onComplete();
+    };
+
+    window.speechSynthesis.speak(utter);
+  } catch (err) {
+    console.warn("Could not speak coach text:", err);
+    if (onComplete) onComplete();
+  }
+}
+
+function startListeningForVoiceReply() {
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) {
+    updateVoiceStatus("idle");
+    return;
+  }
+
+  if (isCurrentlyListening || isCoachCurrentlySpeaking) return;
+
+  if (!recognitionInstance) {
+    recognitionInstance = new SpeechRec();
+    recognitionInstance.continuous = false;
+    recognitionInstance.interimResults = true;
+    recognitionInstance.lang = "en-US";
+
+    recognitionInstance.onstart = () => {
+      isCurrentlyListening = true;
+      updateVoiceStatus("listening", "Listening to you... speak now");
+    };
+
+    recognitionInstance.onresult = (e) => {
+      let transcript = "";
+      for (let i = e.resultIndex; i < e.results.length; ++i) {
+        transcript += e.results[i][0].transcript;
       }
+      const inp = document.getElementById("qaInput");
+      if (inp) inp.value = transcript;
+
+      if (e.results[0].isFinal && transcript.trim()) {
+        isCurrentlyListening = false;
+        updateVoiceStatus("thinking", "Analyzing your idea...");
+        askCoach(transcript);
+      }
+    };
+
+    recognitionInstance.onerror = (e) => {
+      console.warn("Voice recognition notice:", e.error);
+      isCurrentlyListening = false;
+      if (voiceModeActive && e.error === "no-speech") {
+        // In continuous voice mode, prompt user or keep ready
+        updateVoiceStatus("idle");
+      } else {
+        updateVoiceStatus("idle");
+      }
+    };
+
+    recognitionInstance.onend = () => {
+      isCurrentlyListening = false;
+      if (!isCoachCurrentlySpeaking && voiceModeActive) {
+        updateVoiceStatus("idle");
+      }
+    };
+  }
+
+  try {
+    recognitionInstance.start();
+  } catch (err) {
+    console.warn("Recognition already active or failed to start:", err);
+  }
+}
+
+function renderQA() {
+  const msgsEl = document.getElementById("qaMessages");
+  const sugEl = document.getElementById("qaSuggestions");
+  if (!msgsEl) return;
+
+  const k = getConversationKey();
+  const thread = getConversationThread(k);
+  const ply = currentPly();
+
+  if (thread.length === 0) {
+    const tp = ply ? state.tpByPly[ply.ply] : null;
+    let welcome = "";
+    if (state.variation) {
+      welcome = `I'm with you on line <strong>${esc(state.variation.label)}</strong>. Test any move on the board or ask me questions about this line!`;
+    } else if (tp) {
+      welcome = `We're at turning point <strong>move ${tp.move_number} (${esc(tp.played_san)})</strong>. Why do you think ${esc(tp.best_san)} is stronger than ${esc(tp.played_san)}? Let's discuss it!`;
+    } else if (ply) {
+      welcome = `We're looking at <strong>${movePrefix(ply)}${esc(ply.san)}</strong>. What would you like to explore here?`;
+    } else {
+      welcome = `Welcome to the game! What strategic plan or opening ideas would you like to look at?`;
     }
-  };
+
+    msgsEl.innerHTML = `
+      <div class="qa-msg coach">
+        <div class="qa-bubble">
+          <div class="qa-bubble-header"><span>&#128104;&#8205;&#127979; Coach</span></div>
+          <div>${welcome}</div>
+        </div>
+      </div>
+    `;
+  } else {
+    let html = "";
+    thread.forEach((msg, idx) => {
+      if (msg.role === "user") {
+        html += `
+          <div class="qa-msg user">
+            <div class="qa-bubble">
+              <div class="qa-bubble-header"><span>You</span></div>
+              <div>${esc(msg.content)}</div>
+            </div>
+          </div>
+        `;
+      } else {
+        const btns = (msg.interactive_lines || []).map((l) => `
+          <button class="btn-play-line" data-fen="${esc(l.fen)}" data-uci='${JSON.stringify(l.uci_moves)}' data-label="${esc(l.label)}">
+            &#9654; ${esc(l.label)}
+          </button>`).join("");
+
+        html += `
+          <div class="qa-msg coach">
+            <div class="qa-bubble">
+              <div class="qa-bubble-header">
+                <span>&#128104;&#8205;&#127979; Coach</span>
+                <button class="btn-speak-msg" data-msg-idx="${idx}" title="Listen to coach speak">&#128266; Listen</button>
+              </div>
+              <div>${renderMarkdown(msg.content)}</div>
+              ${btns ? `<div class="line-btns" style="margin-top:8px;">${btns}</div>` : ""}
+            </div>
+          </div>
+        `;
+      }
+    });
+    msgsEl.innerHTML = html;
+  }
+
+  msgsEl.querySelectorAll(".btn-speak-msg").forEach((b) => {
+    b.onclick = () => {
+      const idx = parseInt(b.dataset.msgIdx, 10);
+      const msg = thread[idx];
+      if (msg && msg.content) speakCoachDialogue(msg.content);
+    };
+  });
+  bindLineButtons(msgsEl);
+
+  // Suggestion chips
+  if (sugEl) {
+    let chips = [];
+    const lastCoachMsg = [...thread].reverse().find((m) => m.role === "coach");
+    if (lastCoachMsg && lastCoachMsg.suggested_followups && lastCoachMsg.suggested_followups.length > 0) {
+      chips = lastCoachMsg.suggested_followups;
+    } else if (ply) {
+      const tp = state.tpByPly[ply.ply];
+      if (tp) {
+        chips.push(`Why was ${ply.san} a ${tp.severity}?`);
+        if (tp.candidates[1]) chips.push(`What if I played ${tp.candidates[1].san} instead?`);
+      } else {
+        chips.push("What is the plan here?");
+      }
+      chips.push("What is my opponent threatening?");
+    } else {
+      chips = ["What are the main plans in this opening?", "What is opponent threatening?"];
+    }
+
+    sugEl.innerHTML = chips.map((q) => `<span class="chip-q">${esc(q)}</span>`).join("");
+    sugEl.querySelectorAll(".chip-q").forEach((c) => (c.onclick = () => askCoach(c.textContent)));
+  }
+
+  msgsEl.scrollTop = msgsEl.scrollHeight;
 }
 
 async function askCoach(question) {
-  if (!question.trim() || !state.game) return;
-  const askedAt = state.plyIndex;
-  const msgs = document.getElementById("qaMessages");
-  document.getElementById("qaInput").value = "";
-  msgs.insertAdjacentHTML("beforeend", `<div class="qa-msg user"><div class="qa-bubble">${esc(question)}</div></div>`);
-  const id = `a${Date.now()}`;
-  msgs.insertAdjacentHTML("beforeend", `<div class="qa-msg" id="${id}"><div class="qa-bubble"><em>Thinking…</em></div></div>`);
-  const loadingEl = document.getElementById(id);
-  if (loadingEl) loadingEl.scrollIntoView({ block: "nearest" });
-  saveChat();
+  const q = question.trim();
+  if (!q || !state.game) return;
+
+  const k = getConversationKey();
+  const thread = getConversationThread(k);
+  const inp = document.getElementById("qaInput");
+  if (inp) inp.value = "";
+
+  // Append user message
+  thread.push({ role: "user", content: q });
+  renderQA();
+
+  const msgsEl = document.getElementById("qaMessages");
+  const tempId = `temp_${Date.now()}`;
+  msgsEl.insertAdjacentHTML(
+    "beforeend",
+    `<div class="qa-msg coach" id="${tempId}"><div class="qa-bubble"><em>&#129504; Coach is analyzing...</em></div></div>`
+  );
+  msgsEl.scrollTop = msgsEl.scrollHeight;
 
   const ply = currentPly();
   let fenCurrent = getCurrentFen(), fenBefore = null;
@@ -1374,50 +1561,147 @@ async function askCoach(question) {
     fenBefore = ply.fen_before;
   }
 
-  let answerHtml;
+  // History payload for conversational memory
+  const historyPayload = thread.slice(0, -1).map((m) => ({
+    role: m.role,
+    content: m.content,
+  })).slice(-8);
+
   try {
     const resp = await fetch("/api/qa", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        question,
+        question: q,
         fen_current: fenCurrent,
         fen_before: fenBefore,
         ply_meta: state.variation ? null : ply,
         perspective: state.game.player_color || "white",
+        history: historyPayload,
       }),
     });
     const data = await resp.json();
     if (!resp.ok) throw new Error(data.detail || "Request failed");
-    const btns = (data.interactive_lines || []).map((l) => `
-      <button class="btn-play-line" data-fen="${esc(l.fen)}" data-uci='${JSON.stringify(l.uci_moves)}' data-label="${esc(l.label)}">
-        &#9654; ${esc(l.label)}
-      </button>`).join("");
-    answerHtml = `<div class="qa-bubble">${renderMarkdown(data.answer_markdown)}${btns ? `<div class="line-btns">${btns}</div>` : ""}</div>`;
 
-    // Automatically demonstrate primary variation line on the board
-    if (data.interactive_lines && data.interactive_lines.length > 0) {
-      const l0 = data.interactive_lines[0];
-      startVariation(l0.label, l0.fen, l0.uci_moves, 0);
-      toggleAutoPlay(1100);
-    }
-    if (voiceEnabled) {
-      speakExplanation(data.answer_markdown);
+    // Remove temp indicator
+    const tempEl = document.getElementById(tempId);
+    if (tempEl) tempEl.remove();
+
+    // Append coach message to thread
+    thread.push({
+      role: "coach",
+      content: data.answer_markdown,
+      interactive_lines: data.interactive_lines || [],
+      suggested_followups: data.suggested_followups || [],
+    });
+    renderQA();
+
+    // Speak response if voice narration or Voice Mode is active
+    if (voiceNarrationEnabled || voiceModeActive) {
+      speakCoachDialogue(data.answer_markdown, () => {
+        // If two-way voice mode is active, automatically listen for user reply!
+        if (voiceModeActive) {
+          startListeningForVoiceReply();
+        }
+      });
     }
   } catch (err) {
-    answerHtml = `<div class="qa-bubble">Sorry — ${esc(err.message)}</div>`;
+    const tempEl = document.getElementById(tempId);
+    if (tempEl) tempEl.remove();
+    thread.push({
+      role: "coach",
+      content: `Sorry — ${err.message}`,
+      interactive_lines: [],
+    });
+    renderQA();
+  }
+}
+
+function setupConversationalUI() {
+  const btnVoiceMode = document.getElementById("btnVoiceMode");
+  const btnVoiceToggle = document.getElementById("btnVoiceToggle");
+  const btnClearChat = document.getElementById("btnClearChat");
+  const btnVoiceStop = document.getElementById("btnVoiceStop");
+  const btnMic = document.getElementById("btnMic");
+
+  if (btnVoiceMode) {
+    btnVoiceMode.onclick = () => {
+      voiceModeActive = !voiceModeActive;
+      if (voiceModeActive) {
+        voiceNarrationEnabled = true;
+        btnVoiceMode.classList.add("active");
+        btnVoiceMode.innerHTML = "&#127908; Voice Mode: ON";
+        btnVoiceMode.title = "Hands-free voice mode: ON (Click to turn off)";
+        if (btnVoiceToggle) {
+          btnVoiceToggle.innerHTML = "&#128266;";
+          btnVoiceToggle.classList.remove("muted");
+        }
+
+        const k = getConversationKey();
+        const thread = getConversationThread(k);
+        const greeting = thread.length > 0
+          ? "I'm listening. Ask me anything or explore a move on the board."
+          : "Hello! I'm your chess coach. What would you like to explore in this position?";
+
+        speakCoachDialogue(greeting, () => {
+          if (voiceModeActive) startListeningForVoiceReply();
+        });
+      } else {
+        btnVoiceMode.classList.remove("active");
+        btnVoiceMode.innerHTML = "&#127908; Voice Mode: OFF";
+        btnVoiceMode.title = "Hands-free voice mode: OFF (Click to turn on)";
+        stopAllVoiceActivity();
+      }
+    };
   }
 
-  if (state.plyIndex === askedAt) {
-    const el = document.getElementById(id);
-    if (el) { el.innerHTML = answerHtml; bindLineButtons(el); el.scrollIntoView({ block: "nearest" }); }
-    saveChat();
-  } else {
-    const tmp = document.createElement("div");
-    tmp.innerHTML = state.chats[askedAt] || "";
-    const el = tmp.querySelector(`#${id}`);
-    if (el) el.innerHTML = answerHtml;
-    state.chats[askedAt] = tmp.innerHTML;
+  if (btnVoiceToggle) {
+    btnVoiceToggle.onclick = () => {
+      voiceNarrationEnabled = !voiceNarrationEnabled;
+      if (voiceNarrationEnabled) {
+        btnVoiceToggle.innerHTML = "&#128266;";
+        btnVoiceToggle.classList.remove("muted");
+        btnVoiceToggle.title = "Voice narration: ON (Click to mute)";
+      } else {
+        btnVoiceToggle.innerHTML = "&#128263;";
+        btnVoiceToggle.classList.add("muted");
+        btnVoiceToggle.title = "Voice narration: OFF (Click to unmute)";
+        stopAllVoiceActivity();
+      }
+    };
+  }
+
+  if (btnClearChat) {
+    btnClearChat.onclick = () => {
+      const k = getConversationKey();
+      if (state.conversations) state.conversations[k] = [];
+      stopAllVoiceActivity();
+      renderQA();
+    };
+  }
+
+  if (btnVoiceStop) {
+    btnVoiceStop.onclick = () => {
+      stopAllVoiceActivity();
+      if (voiceModeActive) {
+        voiceModeActive = false;
+        if (btnVoiceMode) {
+          btnVoiceMode.classList.remove("active");
+          btnVoiceMode.innerHTML = "&#127908; Voice Mode: OFF";
+        }
+      }
+    };
+  }
+
+  if (btnMic) {
+    btnMic.onclick = () => {
+      if (isCurrentlyListening) {
+        stopAllVoiceActivity();
+      } else {
+        stopAllVoiceActivity();
+        startListeningForVoiceReply();
+      }
+    };
   }
 }
 
@@ -1540,8 +1824,7 @@ window.addEventListener("DOMContentLoaded", async () => {
   $("btnVarNext").onclick = () => stepVariation(1);
   $("btnVarExit").onclick = () => exitVariation();
 
-  setupVoiceInput();
-  setupVoiceToggle();
+  setupConversationalUI();
 
   window.addEventListener("keydown", (e) => {
     if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;

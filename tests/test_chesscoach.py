@@ -119,3 +119,30 @@ def test_auto_heal_engine_event_loop():
         assert res["eval_str"]
         assert 0.0 <= res["win_prob_white"] <= 1.0
         assert interrogator.is_alive()
+
+
+def test_conversational_qa_with_history():
+    """Verify that Q&A engine resolves conversational follow-ups using dialogue history."""
+    client = TestClient(app)
+    fen_before = "r1bqkb1r/pppp1p1p/2n5/4p1p1/2BPN3/5N2/PPP2PPP/R1BQK2R w KQkq - 0 7"
+    fen_current = "r1bqkb1r/pppp1p1p/2n5/4p1p1/2BPN3/5N2/PPP2PPP/R1BQ1RK1 b kq - 1 7"
+    history = [
+        {"role": "user", "content": "What if I played f4 instead?"},
+        {"role": "coach", "content": "f4 looks tempting but allows Black counterplay."},
+    ]
+    resp = client.post(
+        "/api/qa",
+        json={
+            "question": "Why does that fail?",
+            "fen_current": fen_current,
+            "fen_before": fen_before,
+            "ply_meta": {"san": "O-O", "uci": "e1g1", "eval_white_str": "+0.50"},
+            "perspective": "white",
+            "history": history,
+        },
+    )
+    assert resp.status_code == 200
+    data = resp.json()
+    assert "answer_markdown" in data
+    assert "suggested_followups" in data
+    assert len(data["suggested_followups"]) >= 1

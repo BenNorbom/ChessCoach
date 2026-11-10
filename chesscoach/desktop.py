@@ -21,28 +21,73 @@ from pathlib import Path
 import uvicorn
 
 
-def _free_port() -> int:
+def _is_server_alive(port: int) -> bool:
+    url = f"http://127.0.0.1:{port}/api/status"
+    try:
+        req = urllib.request.Request(url, headers={"User-Agent": "ChessCoachLauncher"})
+        with urllib.request.urlopen(req, timeout=0.8) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def _find_free_port() -> int:
+    for candidate in (28140, 28141, 28142, 28143, 28144, 28145):
+        with socket.socket() as s:
+            try:
+                s.bind(("127.0.0.1", candidate))
+                return candidate
+            except Exception:
+                continue
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0))
         return int(s.getsockname()[1])
 
 
-def _start_server(port: int) -> uvicorn.Server:
+def _start_server(port: int) -> tuple[uvicorn.Server, bool]:
     from chesscoach.server import app
 
     config = uvicorn.Config(
         app, host="127.0.0.1", port=port, log_level="warning", log_config=None
     )
     server = uvicorn.Server(config)
-    threading.Thread(target=server.run, daemon=True).start()
-    url = f"http://127.0.0.1:{port}/api/status"
-    for _ in range(100):
-        try:
-            urllib.request.urlopen(url, timeout=1)
-            break
-        except Exception:
-            time.sleep(0.1)
-    return server
+    t = threading.Thread(target=server.run, daemon=True)
+    t.start()
+
+    # Wait until server is confirmed healthy and accepting connections
+    for _ in range(120):
+        if _is_server_alive(port):
+            return server, True
+        time.sleep(0.08)
+    return server, False
+
+
+def _open_native_window(url: str) -> bool:
+    """Open a true native standalone desktop window via pywebview (embedded WebView2).
+
+    This launches a dedicated desktop application window with its own taskbar identity,
+    custom icon, and native window frame without running as an Edge browser instance.
+    """
+    try:
+        import webview
+
+        ico_path = Path(__file__).resolve().parent.parent / "assets" / "icon.ico"
+        icon_arg = str(ico_path) if ico_path.is_file() else None
+
+        window = webview.create_window(
+            title="ChessCoach",
+            url=url,
+            width=1440,
+            height=920,
+            min_size=(960, 600),
+            background_color="#161512",
+            text_select=True,
+        )
+        webview.start(icon=icon_arg, private_mode=False)
+        return True
+    except Exception as e:
+        print(f"pywebview native window unavailable, falling back: {e}", file=sys.stderr)
+        return False
 
 
 def _open_standalone_app_window(url: str) -> bool:
@@ -84,11 +129,29 @@ def main() -> None:
     except Exception:
         pass
 
-    port = _free_port()
-    server = _start_server(port)
-    url = f"http://127.0.0.1:{port}/"
+    # 1. Check if ChessCoach backend is already running on a known port
+    active_port = None
+    for cand in (28140, 28141, 28142, 28143):
+        if _is_server_alive(cand):
+            active_port = cand
+            break
 
-    opened = _open_standalone_app_window(url)
+    server = None
+    if active_port is not None:
+        url = f"http://127.0.0.1:{active_port}/"
+    else:
+        port = _find_free_port()
+        server, ready = _start_server(port)
+        if not ready:
+            with socket.socket() as s:
+                s.bind(("127.0.0.1", 0))
+                port = int(s.getsockname()[1])
+            server, ready = _start_server(port)
+        url = f"http://127.0.0.1:{port}/"
+
+    opened = _open_native_window(url)
+    if not opened:
+        opened = _open_standalone_app_window(url)
     if not opened:
         webbrowser.open(url)
         print(f"ChessCoach is running at {url} — press Ctrl+C to quit.")
@@ -98,8 +161,9 @@ def main() -> None:
         except KeyboardInterrupt:
             pass
 
-    server.should_exit = True
-    time.sleep(0.25)
+    if server is not None:
+        server.should_exit = True
+        time.sleep(0.25)
     sys.exit(0)
 
 
