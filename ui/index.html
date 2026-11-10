@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>ChessCoach</title>
-  <link rel="icon" type="image/png" href="/static/../assets/icon.png" />
-  <link rel="stylesheet" href="/static/styles.css" />
+  <link rel="icon" type="image/png" href="/assets/icon.png" />
+  <link rel="stylesheet" href="/static/styles.css?v=3" />
 </head>
 <body>
   <header class="topbar">
@@ -27,6 +27,7 @@
           <span><span class="var-pill">EXPLORING LINE</span> <strong id="varTitle"></strong> <span id="varStepLabel" class="muted"></span></span>
           <span class="var-controls">
             <button id="btnVarPrev" class="btn btn-xs" title="Previous move (Left Arrow)">&#9664; Prev</button>
+            <button id="btnVarPlay" class="btn btn-xs btn-var-play" title="Auto-play line (Space)">&#9654; Auto-play</button>
             <button id="btnVarNext" class="btn btn-xs" title="Next move (Right Arrow)">Next &#9654;</button>
             <button id="btnVarExit" class="btn btn-xs btn-danger-soft" title="Exit line (Esc)">&#10005; Back to game</button>
           </span>
@@ -75,8 +76,10 @@
       </div>
 
       <form id="qaForm" class="qa-input-row">
-        <input id="qaInput" type="text" placeholder="e.g. What if I played f4 instead?" autocomplete="off" />
+        <button id="btnMic" type="button" class="btn btn-icon btn-mic" title="Talk to coach (Click to speak)">&#127908;</button>
+        <input id="qaInput" type="text" placeholder="e.g. What if I played f4 instead? (or click 🎤 to talk)" autocomplete="off" />
         <button id="btnAsk" type="submit" class="btn btn-primary">Ask</button>
+        <button id="btnVoiceToggle" type="button" class="btn btn-icon btn-voice muted" title="Voice read-aloud: OFF (Click to unmute)">&#128263;</button>
       </form>
     </section>
   </main>
@@ -142,8 +145,8 @@
     </div>
   </div>
 
-  <script src="/static/pieces.js"></script>
-  <script src="/static/chess.min.js"></script>
-  <script src="/static/app.js"></script>
+  <script src="/static/pieces.js?v=3"></script>
+  <script src="/static/chess.min.js?v=3"></script>
+  <script src="/static/app.js?v=3"></script>
 </body>
 </html>

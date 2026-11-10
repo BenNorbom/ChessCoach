@@ -65,6 +65,15 @@ async def lifespan(app: FastAPI):
 app = FastAPI(title="ChessCoach Studio", version="0.1.0", lifespan=lifespan)
 
 
+@app.middleware("http")
+async def add_no_cache_headers(request, call_next):
+    response = await call_next(request)
+    response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+    response.headers["Pragma"] = "no-cache"
+    response.headers["Expires"] = "0"
+    return response
+
+
 class AnalyzeRequest(BaseModel):
     pgn_text: str
     player_color: str = "white"

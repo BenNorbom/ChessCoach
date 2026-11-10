@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import io
 import math
+import subprocess
+import sys
 from dataclasses import dataclass
 from typing import Any
 
@@ -140,8 +142,14 @@ class HybridInterrogator:
 
     def start(self) -> None:
         if self._engine is None:
+            creationflags = 0
+            if sys.platform == "win32":
+                creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0x08000000)
             self._engine = chess.engine.SimpleEngine.popen_uci(
-                self.stockfish_path, timeout=120.0
+                self.stockfish_path,
+                timeout=120.0,
+                setpgrp=True,
+                creationflags=creationflags,
             )
             self._engine.configure({"Threads": self.threads, "Hash": self.hash_mb})
 
@@ -210,6 +218,7 @@ class HybridInterrogator:
         board = chess.Board(fen)
 
         if board.is_checkmate():
+            wb = evaluate_whitebox(board).to_dict(chess.WHITE)
             if board.turn == chess.WHITE:
                 return {
                     "fen": fen,
@@ -220,6 +229,9 @@ class HybridInterrogator:
                     "result": "0-1",
                     "best_move_uci": None,
                     "best_move_san": None,
+                    "pv_sans": [],
+                    "pv_formatted": "Checkmate",
+                    "whitebox": wb,
                 }
             else:
                 return {
@@ -231,9 +243,13 @@ class HybridInterrogator:
                     "result": "1-0",
                     "best_move_uci": None,
                     "best_move_san": None,
+                    "pv_sans": [],
+                    "pv_formatted": "Checkmate",
+                    "whitebox": wb,
                 }
 
         if board.is_stalemate() or board.is_insufficient_material() or board.can_claim_fifty_moves():
+            wb = evaluate_whitebox(board).to_dict(chess.WHITE)
             return {
                 "fen": fen,
                 "eval_cp": 0,
@@ -243,6 +259,9 @@ class HybridInterrogator:
                 "result": "1/2-1/2",
                 "best_move_uci": None,
                 "best_move_san": None,
+                "pv_sans": [],
+                "pv_formatted": "Draw",
+                "whitebox": wb,
             }
 
         info = self.safe_analyse(board, chess.engine.Limit(depth=depth, time=time_limit))
@@ -255,6 +274,9 @@ class HybridInterrogator:
         pv = info.get("pv", [])
         best_uci = pv[0].uci() if pv else None
         best_san = board.san(pv[0]) if (pv and pv[0] in board.legal_moves) else None
+        pv_sans = pv_to_san_list(board, pv, 6)
+        pv_formatted = format_pv_numbered(board, pv, 6)
+        wb = evaluate_whitebox(board).to_dict(chess.WHITE)
 
         return {
             "fen": fen,
@@ -265,6 +287,9 @@ class HybridInterrogator:
             "result": "*",
             "best_move_uci": best_uci,
             "best_move_san": best_san,
+            "pv_sans": pv_sans,
+            "pv_formatted": pv_formatted,
+            "whitebox": wb,
         }
 
     def interrogate_decision(

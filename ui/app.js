@@ -95,8 +95,11 @@ async function requestPositionEval(fen) {
 
     if (getCurrentFen() === fen && mySeq === evalFetchSeq) {
       applyEvalToUI(data.win_prob_white, data.eval_str);
-      if (state.variation && state.variation.step === state.variation.moves.length && data.best_move_uci) {
-        renderBoard();
+      if (state.variation) {
+        renderNote();
+        if (state.variation.step === state.variation.moves.length && data.best_move_uci) {
+          renderBoard();
+        }
       }
     }
     return data;
@@ -293,6 +296,55 @@ function renderBoard() {
 /* ---------------- Piece Movement & Drag-and-Drop Interaction ---------------- */
 let activeDrag = null;
 
+function highlightSelectionAndDestinations() {
+  const destMap = {};
+  for (const d of state.legalDestinations) {
+    destMap[d.to] = d;
+  }
+  document.querySelectorAll(".sq").forEach((sqEl) => {
+    const sq = sqEl.dataset.sq;
+    const isSelected = state.selectedSquare === sq;
+    const dest = destMap[sq];
+    sqEl.classList.toggle("selected", isSelected);
+    sqEl.classList.toggle("can-dest", Boolean(dest));
+    sqEl.classList.toggle("is-capture", Boolean(dest && dest.isCapture));
+
+    const existingMarker = sqEl.querySelector(".move-dot, .capture-ring");
+    if (dest) {
+      if (!existingMarker) {
+        const marker = document.createElement("div");
+        marker.className = dest.isCapture ? "capture-ring" : "move-dot";
+        sqEl.appendChild(marker);
+      } else {
+        existingMarker.className = dest.isCapture ? "capture-ring" : "move-dot";
+      }
+    } else if (existingMarker) {
+      existingMarker.remove();
+    }
+  });
+}
+
+function getSquareFromPoint(x, y) {
+  // 1. Try DOM element directly under coordinates
+  const el = document.elementFromPoint(x, y)?.closest(".sq");
+  if (el && el.dataset.sq) return el.dataset.sq;
+
+  // 2. Geometric projection onto the 8x8 chessboard
+  const grid = document.getElementById("boardGrid");
+  if (!grid) return null;
+  const rect = grid.getBoundingClientRect();
+  if (x >= rect.left && x <= rect.right && y >= rect.top && y <= rect.bottom) {
+    const col = Math.floor(((x - rect.left) / rect.width) * 8);
+    const row = Math.floor(((y - rect.top) / rect.height) * 8);
+    const clampedCol = Math.max(0, Math.min(7, col));
+    const clampedRow = Math.max(0, Math.min(7, row));
+    const r = state.flipped ? 7 - clampedRow : clampedRow;
+    const c = state.flipped ? 7 - clampedCol : clampedCol;
+    return String.fromCharCode(97 + c) + (8 - r);
+  }
+  return null;
+}
+
 function onSquarePointerDown(e, sq) {
   // Only primary mouse button or touch
   if (e.button !== 0 && e.pointerType === "mouse") return;
@@ -302,13 +354,31 @@ function onSquarePointerDown(e, sq) {
   // 1. If a square is already selected and clicked square is one of legal destinations:
   const dest = state.legalDestinations.find((d) => d.to === sq);
   if (state.selectedSquare && dest) {
-    makeUserMove(state.selectedSquare, sq, dest.promotion ? "q" : undefined);
+    const from = state.selectedSquare;
+    state.selectedSquare = null;
+    state.legalDestinations = [];
+    highlightSelectionAndDestinations();
+    makeUserMove(from, sq, dest.promotion ? "q" : undefined);
+    return;
+  }
+
+  // If clicked on the already selected square: deselect
+  if (state.selectedSquare === sq) {
+    state.selectedSquare = null;
+    state.legalDestinations = [];
+    highlightSelectionAndDestinations();
     return;
   }
 
   // 2. Check if clicked square has a piece belonging to the side to move:
   const piece = c.get(sq);
   if (piece && piece.color === c.turn()) {
+    if (activeDrag) {
+      if (activeDrag.avatarEl) activeDrag.avatarEl.remove();
+      if (activeDrag.sqEl) activeDrag.sqEl.classList.remove("dragging-source");
+      activeDrag = null;
+    }
+
     state.selectedSquare = sq;
     const verboseMoves = c.moves({ square: sq, verbose: true });
     state.legalDestinations = verboseMoves.map((m) => ({
@@ -317,7 +387,8 @@ function onSquarePointerDown(e, sq) {
       promotion: Boolean(m.promotion || m.flags.includes("p"))
     }));
 
-    renderBoard();
+    // Highlight in place without destroying DOM nodes
+    highlightSelectionAndDestinations();
 
     const sqEl = document.querySelector(`.sq[data-sq="${sq}"]`);
     const rect = sqEl ? sqEl.getBoundingClientRect() : { width: 80, height: 80 };
@@ -331,8 +402,14 @@ function onSquarePointerDown(e, sq) {
       isDragging: false,
       avatarEl: null,
       sqEl,
-      size: Math.min(rect.width, rect.height) || 80
+      size: Math.min(rect.width, rect.height) || 80,
+      pointerId: e.pointerId,
+      target: e.currentTarget
     };
+
+    try {
+      e.currentTarget.setPointerCapture(e.pointerId);
+    } catch (_) {}
 
     e.preventDefault();
     return;
@@ -342,9 +419,15 @@ function onSquarePointerDown(e, sq) {
   if (state.selectedSquare) {
     state.selectedSquare = null;
     state.legalDestinations = [];
-    renderBoard();
+    highlightSelectionAndDestinations();
   }
 }
+
+// Prevent browser native drag ghost on chess pieces
+window.addEventListener("dragstart", (e) => {
+  e.preventDefault();
+  return false;
+});
 
 // Global pointer movement and release listeners
 window.addEventListener("pointermove", (e) => {
@@ -354,7 +437,7 @@ window.addEventListener("pointermove", (e) => {
   const dist = Math.hypot(e.clientX - d.startX, e.clientY - d.startY);
 
   if (!d.isDragging) {
-    if (dist > 5) {
+    if (dist >= 4) {
       d.isDragging = true;
       const avatar = document.createElement("div");
       avatar.className = "drag-avatar";
@@ -375,12 +458,12 @@ window.addEventListener("pointermove", (e) => {
     d.avatarEl.style.left = `${e.clientX}px`;
     d.avatarEl.style.top = `${e.clientY}px`;
 
-    const el = document.elementFromPoint(e.clientX, e.clientY)?.closest(".sq");
-    const targetSq = el ? el.dataset.sq : null;
+    const targetSq = getSquareFromPoint(e.clientX, e.clientY);
 
     document.querySelectorAll(".sq.drag-hover").forEach((s) => s.classList.remove("drag-hover"));
     if (targetSq && state.legalDestinations.some((m) => m.to === targetSq)) {
-      el.classList.add("drag-hover");
+      const destEl = document.querySelector(`.sq[data-sq="${targetSq}"]`);
+      if (destEl) destEl.classList.add("drag-hover");
     }
   }
 });
@@ -391,18 +474,26 @@ window.addEventListener("pointerup", (e) => {
   const d = activeDrag;
   activeDrag = null;
 
+  if (d.target && d.pointerId !== undefined) {
+    try {
+      d.target.releasePointerCapture(d.pointerId);
+    } catch (_) {}
+  }
+
   document.body.classList.remove("is-dragging-piece");
   document.querySelectorAll(".sq.drag-hover").forEach((s) => s.classList.remove("drag-hover"));
   if (d.sqEl) d.sqEl.classList.remove("dragging-source");
   if (d.avatarEl) d.avatarEl.remove();
 
   if (d.isDragging) {
-    const el = document.elementFromPoint(e.clientX, e.clientY)?.closest(".sq");
-    const targetSq = el ? el.dataset.sq : null;
+    const targetSq = getSquareFromPoint(e.clientX, e.clientY);
 
     if (targetSq && targetSq !== d.fromSq) {
       const dest = state.legalDestinations.find((m) => m.to === targetSq);
       if (dest) {
+        state.selectedSquare = null;
+        state.legalDestinations = [];
+        highlightSelectionAndDestinations();
         makeUserMove(d.fromSq, targetSq, dest.promotion ? "q" : undefined);
         return;
       }
@@ -418,32 +509,39 @@ window.addEventListener("pointerup", (e) => {
           isCapture: Boolean(m.captured || m.flags.includes("c") || m.flags.includes("e")),
           promotion: Boolean(m.promotion || m.flags.includes("p"))
         }));
-        renderBoard();
+        highlightSelectionAndDestinations();
         return;
       }
     }
 
     state.selectedSquare = null;
     state.legalDestinations = [];
-    renderBoard();
+    highlightSelectionAndDestinations();
   }
 });
 
 window.addEventListener("pointercancel", () => {
   if (!activeDrag) return;
-  if (activeDrag.avatarEl) activeDrag.avatarEl.remove();
-  if (activeDrag.sqEl) activeDrag.sqEl.classList.remove("dragging-source");
+  const d = activeDrag;
+  activeDrag = null;
+  if (d.avatarEl) d.avatarEl.remove();
+  if (d.sqEl) d.sqEl.classList.remove("dragging-source");
+  if (d.target && d.pointerId !== undefined) {
+    try {
+      d.target.releasePointerCapture(d.pointerId);
+    } catch (_) {}
+  }
   document.body.classList.remove("is-dragging-piece");
   document.querySelectorAll(".sq.drag-hover").forEach((s) => s.classList.remove("drag-hover"));
-  activeDrag = null;
   state.selectedSquare = null;
   state.legalDestinations = [];
-  renderBoard();
+  highlightSelectionAndDestinations();
 });
 
 function makeUserMove(from, to, promotion = "q") {
   const currentFen = getCurrentFen();
   const c = new window.Chess(currentFen);
+  const moveNum = parseInt(c.fen().split(" ")[5] || "1", 10);
   const m = c.move({ from, to, promotion });
   if (!m) return;
   
@@ -460,7 +558,8 @@ function makeUserMove(from, to, promotion = "q") {
         uci,
         san: m.san,
         color: m.color,
-        fen: c.fen()
+        fen: c.fen(),
+        move_number: moveNum
       });
       v.fens.push(c.fen());
       v.uciMoves = v.moves.map((x) => x.uci);
@@ -468,16 +567,20 @@ function makeUserMove(from, to, promotion = "q") {
     }
   } else {
     const ply = currentPly();
+    const tp = ply ? state.tpByPly[ply.ply] : null;
     const label = ply ? `What-if from ${movePrefix(ply)}${ply.san}` : "What-if from start";
     state.variation = {
       label,
+      kind: "user_move",
+      originTp: tp,
       startFen: currentFen,
       uciMoves: [uci],
       moves: [{
         uci,
         san: m.san,
         color: m.color,
-        fen: c.fen()
+        fen: c.fen(),
+        move_number: moveNum
       }],
       fens: [currentFen, c.fen()],
       step: 1
@@ -488,10 +591,11 @@ function makeUserMove(from, to, promotion = "q") {
   state.legalDestinations = [];
   renderBoard();
   renderVariationBanner();
+  renderNote();
 }
 
 /* ---------------- Variation System ---------------- */
-function startVariation(label, startFen, uciMoves, startStep = null) {
+function startVariation(label, startFen, uciMoves, startStep = null, kind = "line", originTp = null) {
   const c = new window.Chess(startFen);
   const moves = [];
   const fens = [startFen];
@@ -500,19 +604,23 @@ function startVariation(label, startFen, uciMoves, startStep = null) {
     const to = u.slice(2, 4);
     const piece = c.get(from);
     const promo = u[4] || (piece && piece.type === "p" && (to[1] === "8" || to[1] === "1") ? "q" : undefined);
+    const moveNum = parseInt(c.fen().split(" ")[5] || "1", 10);
     const m = c.move({ from, to, promotion: promo });
     if (!m) break;
     moves.push({
       uci: m.from + m.to + (m.promotion || ""),
       san: m.san,
       color: m.color,
-      fen: c.fen()
+      fen: c.fen(),
+      move_number: moveNum
     });
     fens.push(c.fen());
   }
-  const step = startStep !== null ? Math.max(0, Math.min(moves.length, startStep)) : Math.min(1, moves.length);
+  const step = startStep !== null ? Math.max(0, Math.min(moves.length, startStep)) : 0;
   state.variation = {
     label,
+    kind,
+    originTp,
     startFen,
     uciMoves: moves.map((m) => m.uci),
     moves,
@@ -523,6 +631,7 @@ function startVariation(label, startFen, uciMoves, startStep = null) {
   state.legalDestinations = [];
   renderBoard();
   renderVariationBanner();
+  renderNote();
 }
 
 function stepVariation(delta) {
@@ -533,9 +642,59 @@ function stepVariation(delta) {
   state.legalDestinations = [];
   renderBoard();
   renderVariationBanner();
+  renderNote();
+}
+
+let autoPlayInterval = null;
+
+function stopAutoPlay() {
+  if (autoPlayInterval) {
+    clearInterval(autoPlayInterval);
+    autoPlayInterval = null;
+  }
+  const btn = document.getElementById("btnVarPlay");
+  if (btn) {
+    btn.innerHTML = "&#9654; Auto-play";
+    btn.classList.remove("playing");
+  }
+}
+
+function toggleAutoPlay(delayMs = 1100) {
+  if (autoPlayInterval) {
+    stopAutoPlay();
+    return;
+  }
+  if (!state.variation) return;
+  const v = state.variation;
+  if (v.step >= v.moves.length) {
+    v.step = 0;
+    renderBoard();
+    renderVariationBanner();
+    renderNote();
+  }
+  const btn = document.getElementById("btnVarPlay");
+  if (btn) {
+    btn.innerHTML = "&#10074;&#10074; Pause";
+    btn.classList.add("playing");
+  }
+  autoPlayInterval = setInterval(() => {
+    if (!state.variation) {
+      stopAutoPlay();
+      return;
+    }
+    if (state.variation.step >= state.variation.moves.length) {
+      stopAutoPlay();
+      return;
+    }
+    stepVariation(1);
+    if (state.variation.step >= state.variation.moves.length) {
+      stopAutoPlay();
+    }
+  }, delayMs);
 }
 
 function jumpVariationStep(step) {
+  stopAutoPlay();
   if (!state.variation) return;
   const v = state.variation;
   v.step = Math.max(0, Math.min(v.moves.length, step));
@@ -543,14 +702,20 @@ function jumpVariationStep(step) {
   state.legalDestinations = [];
   renderBoard();
   renderVariationBanner();
+  renderNote();
 }
 
 function exitVariation() {
+  stopAutoPlay();
+  if (window.speechSynthesis) {
+    try { window.speechSynthesis.cancel(); } catch (e) {}
+  }
   state.variation = null;
   state.selectedSquare = null;
   state.legalDestinations = [];
   renderBoard();
   document.getElementById("variationBanner").classList.add("hidden");
+  renderNote();
 }
 
 function renderVariationBanner() {
@@ -622,7 +787,7 @@ function renderTurningPointNote(ply, tp) {
           <div class="line-box-title">If ${esc(cf.opponent_try_san)} &rarr; ${esc(cf.refutation_san)}!</div>
           <div class="line-box-preview">${esc(preview)}</div>
         </div>
-        <button class="btn-play-line counterfactual" data-fen="${esc(tp.fen_before)}" data-uci='${JSON.stringify(fullUci)}' data-label="If ${esc(cf.opponent_try_san)} vs ${esc(tp.best_san)}">
+        <button class="btn-play-line counterfactual" data-fen="${esc(tp.fen_before)}" data-uci='${JSON.stringify(fullUci)}' data-label="If ${esc(cf.opponent_try_san)} vs ${esc(tp.best_san)}" data-kind="counterfactual" data-tp-ply="${tp.ply}">
           &#9654; Play on board
         </button>
       </div>`;
@@ -635,7 +800,7 @@ function renderTurningPointNote(ply, tp) {
       <div class="sub">Better was <code>${esc(tp.best_san)}</code> (${esc(tp.best_eval_white_str)} instead of ${esc(tp.played_eval_white_str)}) &middot; ${esc(tp.root_cause_title)}</div>
 
       <div style="margin: 8px 0 12px; display: flex; gap: 8px; flex-wrap: wrap;">
-        <button class="btn btn-sm btn-play-line" data-fen="${esc(tp.fen_before)}" data-uci='[]' data-label="Decision before ${esc(ply.san)}">
+        <button class="btn btn-sm btn-play-line" data-fen="${esc(tp.fen_before)}" data-uci='[]' data-label="Decision before ${esc(ply.san)}" data-kind="try_moves" data-tp-ply="${tp.ply}">
           &#8630; Reset to before ${esc(ply.san)} (Try your moves)
         </button>
       </div>
@@ -650,7 +815,7 @@ function renderTurningPointNote(ply, tp) {
           <div class="line-box-title">The Refutation Line</div>
           <div class="line-box-preview">${esc(refSanPv)}</div>
         </div>
-        <button class="btn-play-line refutation" data-fen="${esc(tp.fen_before)}" data-uci='${JSON.stringify(refUci)}' data-label="Refutation of ${esc(ply.san)}">
+        <button class="btn-play-line refutation" data-fen="${esc(tp.fen_before)}" data-uci='${JSON.stringify(refUci)}' data-label="Refutation of ${esc(ply.san)}" data-kind="refutation" data-tp-ply="${tp.ply}">
           &#9654; Play on board
         </button>
       </div>
@@ -662,7 +827,7 @@ function renderTurningPointNote(ply, tp) {
           <div class="line-box-title">Recommended Best Line</div>
           <div class="line-box-preview">${esc(bestSanPv)}</div>
         </div>
-        <button class="btn-play-line" data-fen="${esc(tp.fen_before)}" data-uci='${JSON.stringify(bestUci)}' data-label="Best Line: ${esc(tp.best_san)}">
+        <button class="btn-play-line" data-fen="${esc(tp.fen_before)}" data-uci='${JSON.stringify(bestUci)}' data-label="Best Line: ${esc(tp.best_san)}" data-kind="best" data-tp-ply="${tp.ply}">
           &#9654; Play on board
         </button>
       </div>
@@ -679,6 +844,201 @@ function renderTurningPointNote(ply, tp) {
       </div></details>
       ${whiteBoxDetails(tp.whitebox.root)}
     `,
+  };
+}
+
+function renderVariationNote(v) {
+  const currentFen = getCurrentFen();
+  const cached = fenEvalCache.get(currentFen) || {};
+  const tp = v.originTp || (state.game && currentPly() ? state.tpByPly[currentPly().ply] : null);
+  const totalMoves = v.moves.length;
+  const curMove = v.step > 0 && v.moves[v.step - 1] ? v.moves[v.step - 1] : null;
+
+  let badgeCls = "good";
+  let badgeText = "EXPLORING LINE";
+  if (v.kind === "refutation" || v.label.toLowerCase().includes("refutation")) {
+    badgeCls = "blunder";
+    badgeText = "REFUTATION LINE";
+  } else if (v.kind === "best" || v.label.toLowerCase().includes("best")) {
+    badgeCls = "good";
+    badgeText = "RECOMMENDED BEST LINE";
+  } else if (v.kind === "counterfactual" || v.label.toLowerCase().includes("if ")) {
+    badgeCls = "mistake";
+    badgeText = "COUNTERFACTUAL TRY";
+  } else if (v.kind === "user_move" || v.kind === "try_moves" || v.label.toLowerCase().includes("what-if") || v.label.toLowerCase().includes("decision before")) {
+    badgeCls = "line";
+    badgeText = "WHAT-IF EXPERIMENT";
+  }
+
+  // 1. Step Title & Subtitle
+  let stepTitle = "";
+  if (v.step === 0) {
+    stepTitle = `Position before line starts (Move 0 of ${totalMoves})`;
+  } else {
+    const moveNum = curMove.move_number || Math.floor((v.step + 1) / 2);
+    const prefix = curMove.color === "w" ? `${moveNum}. ` : `${moveNum}... `;
+    stepTitle = `Move ${v.step} of ${totalMoves}: <code>${esc(prefix + curMove.san)}</code>`;
+  }
+
+  // 2. Dynamic Move-by-Move Coaching Commentary
+  let commentaryHtml = "";
+  const evalDisplay = cached.eval_str || "evaluating…";
+
+  if (v.kind === "refutation" || v.label.toLowerCase().includes("refutation")) {
+    if (v.step === 0) {
+      commentaryHtml = `
+        <h4>Why this position is critical</h4>
+        <p>In the game, you played <code>${esc(tp ? tp.played_san : "")}</code>. This refutation line proves why that choice backfired.</p>
+        <p class="muted small">Click <strong>Next Move ▶</strong> or press <strong>Right Arrow (&rarr;)</strong> to step through how opponent punishes it.</p>
+      `;
+    } else if (v.step === 1) {
+      commentaryHtml = `
+        <h4>The Game Move: <code>${esc(curMove.san)}</code></h4>
+        <p>This is where the mistake occurred. Stockfish eval: <strong>${esc(evalDisplay)}</strong>.</p>
+        <p><strong>Root Cause:</strong> ${esc(tp ? tp.root_cause_title : "")}</p>
+        <p>${inlineMd(tp ? tp.coaching.your_likely_intent : "")}</p>
+        <p class="small muted">Notice the square and piece weaknesses this move leaves behind.</p>
+      `;
+    } else if (v.step === 2) {
+      const whyBackfired = tp ? tp.coaching.why_it_backfired : "";
+      commentaryHtml = `
+        <h4>Opponent's Punishment: <code>${esc(curMove.san)}</code>!</h4>
+        <p>Opponent strikes! Stockfish eval swings to <strong>${esc(evalDisplay)}</strong>.</p>
+        <p>${inlineMd(whyBackfired)}</p>
+      `;
+    } else {
+      const isPlayer = state.game && curMove.color === state.game.player_color;
+      const actor = isPlayer ? "Your defense" : "Opponent's attack";
+      commentaryHtml = `
+        <h4>${actor}: <code>${esc(curMove.san)}</code></h4>
+        <p>Position evaluation: <strong>${esc(evalDisplay)}</strong>.</p>
+        ${v.step === totalMoves ? `
+          <div class="takeaway"><strong>End of Refutation Line:</strong> Opponent has established decisive tactical or positional control (Eval: <strong>${esc(evalDisplay)}</strong>). Notice the difference compared to playing the Recommended Best Line!</div>
+        ` : `
+          <p class="small muted">Follow the forcing sequence to see how material or space is conceded.</p>
+        `}
+      `;
+    }
+  } else if (v.kind === "best" || v.label.toLowerCase().includes("best")) {
+    if (v.step === 0) {
+      commentaryHtml = `
+        <h4>The Recommended Master Line</h4>
+        <p>Stockfish strongly recommends <code>${esc(tp ? tp.best_san : "")}</code> instead of the game move (<code>${esc(tp ? tp.played_san : "")}</code>).</p>
+        <p class="muted small">Click <strong>Next Move ▶</strong> or press <strong>Right Arrow (&rarr;)</strong> to follow the active plan.</p>
+      `;
+    } else if (v.step === 1) {
+      const whyBest = tp ? tp.coaching.why_best_works.split("**Answering the OTB Doubt:**")[0] : "";
+      commentaryHtml = `
+        <h4>Engine Choice: <code>${esc(curMove.san)}</code>!</h4>
+        <p>Stockfish eval: <strong>${esc(evalDisplay)}</strong> (White win chance: ${cached.win_prob_white ? Math.round(cached.win_prob_white * 100) + "%" : "..."}).</p>
+        <p>${inlineMd(whyBest)}</p>
+      `;
+    } else {
+      const isPlayer = state.game && curMove.color === state.game.player_color;
+      const actor = isPlayer ? "Active initiative" : "Opponent's defensive try";
+      commentaryHtml = `
+        <h4>${actor}: <code>${esc(curMove.san)}</code></h4>
+        <p>Position evaluation: <strong>${esc(evalDisplay)}</strong>.</p>
+        ${v.step === totalMoves ? `
+          <div class="takeaway"><strong>End of Master Line:</strong> You retain a commanding advantage (Eval: <strong>${esc(evalDisplay)}</strong>). Pieces are active and central control is established.</div>
+        ` : `
+          <p class="small muted">Notice how each piece coordinates smoothly to control key squares.</p>
+        `}
+      `;
+    }
+  } else if (v.kind === "counterfactual" || v.label.toLowerCase().includes("if ")) {
+    if (v.step === 0) {
+      commentaryHtml = `
+        <h4>Testing Opponent's Alternate Defense</h4>
+        <p>Testing what happens if opponent tries an alternative defense against your best line.</p>
+      `;
+    } else if (v.step === 1) {
+      commentaryHtml = `
+        <h4>Your Best Move: <code>${esc(curMove.san)}</code></h4>
+        <p>Establishing the active threat. Eval: <strong>${esc(evalDisplay)}</strong>.</p>
+      `;
+    } else if (v.step === 2) {
+      commentaryHtml = `
+        <h4>Opponent's Try: <code>${esc(curMove.san)}</code></h4>
+        <p>Opponent tries to deflect or challenge your plan. Eval: <strong>${esc(evalDisplay)}</strong>.</p>
+      `;
+    } else {
+      commentaryHtml = `
+        <h4>Tactical Refutation: <code>${esc(curMove.san)}</code>!</h4>
+        <p>This defuses opponent's idea and wins decisive advantage (Eval: <strong>${esc(evalDisplay)}</strong>).</p>
+      `;
+    }
+  } else {
+    // Custom user moves on board (What-if testing)
+    if (v.step === 0) {
+      commentaryHtml = `
+        <h4>Try Your Own Moves</h4>
+        <p>The board is set before the critical decision (<code>${esc(tp ? tp.played_san : "")}</code>). <strong>Drag and drop any piece to test a move you would have chosen!</strong></p>
+        <p class="muted small">Stockfish will evaluate it in real time and show you the best continuation.</p>
+      `;
+    } else {
+      let verdictBadge = "";
+      let verdictMsg = "";
+      if (cached.eval_cp !== undefined && tp) {
+        const diff = cached.eval_cp - tp.played_eval_cp;
+        const colorFactor = (tp.color === "white" || tp.color === "w") ? 1 : -1;
+        const gain = diff * colorFactor;
+
+        if (curMove.san === tp.best_san) {
+          verdictBadge = `<span class="verdict good">BEST MOVE</span>`;
+          verdictMsg = `<p style="color:#a8d88a;font-weight:600">🌟 Outstanding! You found the engine's top recommendation (<code>${esc(tp.best_san)}</code>)!</p>`;
+        } else if (gain >= 40) {
+          verdictBadge = `<span class="verdict good">STRONG CHOICE</span>`;
+          verdictMsg = `<p style="color:#a8d88a">✅ Much better than your game move! You gained +${(gain/100).toFixed(2)} in evaluation.</p>`;
+        } else if (gain <= -70) {
+          verdictBadge = `<span class="verdict blunder">BLUNDER / RISK</span>`;
+          verdictMsg = `<p style="color:#f08a80">⚠️ This gives opponent a strong counter-attack (loses ${(Math.abs(gain)/100).toFixed(2)} eval).</p>`;
+        } else {
+          verdictBadge = `<span class="verdict good">PLAYABLE</span>`;
+          verdictMsg = `<p>Solid move. Keeps the position playable.</p>`;
+        }
+      }
+
+      commentaryHtml = `
+        <h4>Your Move: <code>${esc(curMove.san)}</code> ${verdictBadge}</h4>
+        ${verdictMsg}
+        <p>Stockfish eval: <strong>${esc(evalDisplay)}</strong> (White win chance: ${cached.win_prob_white ? Math.round(cached.win_prob_white * 100) + "%" : "..."}).</p>
+        ${cached.best_move_san ? `
+          <div class="line-box" style="margin-top:12px;">
+            <div class="line-box-info">
+              <div class="line-box-title">Stockfish's Response: <code>${esc(cached.best_move_san)}</code></div>
+              <div class="line-box-preview">${esc(cached.pv_formatted || cached.best_move_san)}</div>
+            </div>
+            <button class="btn-play-line" id="btnPlayEngineResponse" data-uci='${JSON.stringify([cached.best_move_uci])}' data-label="Play ${esc(cached.best_move_san)}">
+              &#9654; Play Response
+            </button>
+          </div>
+        ` : ""}
+      `;
+    }
+  }
+
+  // 3. Navigation Controls
+  const navHtml = `
+    <div style="display:flex;gap:8px;margin:12px 0;flex-wrap:wrap;">
+      <button class="btn btn-sm btn-var-step" data-delta="-1" ${v.step === 0 ? "disabled" : ""}>&#9664; Prev Move</button>
+      <button class="btn btn-sm btn-primary btn-var-step" data-delta="1" ${v.step >= totalMoves ? "disabled" : ""}>Next Move &#9654;</button>
+      <button class="btn btn-sm btn-danger-soft btn-var-exit">&#10005; Back to Game</button>
+    </div>
+  `;
+
+  // 4. Positional White-Box breakdown
+  const wbHtml = cached.whitebox ? whiteBoxDetails(cached.whitebox) : "";
+
+  return {
+    cls: `tp-${badgeCls}`,
+    html: `
+      <h2><span class="verdict ${badgeCls}">${badgeText}</span>${esc(v.label)}</h2>
+      <div class="sub">${stepTitle}</div>
+      ${navHtml}
+      ${commentaryHtml}
+      ${wbHtml}
+    `
   };
 }
 
@@ -730,27 +1090,69 @@ function renderSummaryNote() {
   };
 }
 
+let lastRenderedNoteKey = null;
+
 function renderNote() {
   const el = document.getElementById("noteContent");
-  const ply = currentPly();
   let note;
-  if (!ply) note = renderSummaryNote();
-  else if (state.tpByPly[ply.ply]) note = renderTurningPointNote(ply, state.tpByPly[ply.ply]);
-  else note = renderOrdinaryNote(ply);
+  let currentKey;
+  if (state.variation) {
+    note = renderVariationNote(state.variation);
+    currentKey = `var_${state.variation.label}_${state.variation.step}`;
+  } else {
+    const ply = currentPly();
+    if (!ply) {
+      note = renderSummaryNote();
+      currentKey = "summary";
+    } else if (state.tpByPly[ply.ply]) {
+      note = renderTurningPointNote(ply, state.tpByPly[ply.ply]);
+      currentKey = `tp_${ply.ply}`;
+    } else {
+      note = renderOrdinaryNote(ply);
+      currentKey = `ord_${ply.ply}`;
+    }
+  }
   el.className = `note ${note.cls}`;
   el.innerHTML = note.html;
   bindLineButtons(el);
   el.querySelectorAll(".habit-link").forEach((a) => (a.onclick = () => jumpToPly(parseInt(a.dataset.ply, 10))));
-  document.querySelector(".note-scroll").scrollTop = 0;
+  if (currentKey !== lastRenderedNoteKey) {
+    document.querySelector(".note-scroll").scrollTop = 0;
+    lastRenderedNoteKey = currentKey;
+  }
 }
 
 function bindLineButtons(root) {
-  root.querySelectorAll(".btn-play-line, .btn-var").forEach((b) => {
+  root.querySelectorAll(".btn-play-line:not(#btnPlayEngineResponse), .btn-var").forEach((b) => {
     b.onclick = () => {
       const uciMoves = JSON.parse(b.dataset.uci || "[]");
-      startVariation(b.dataset.label, b.dataset.fen, uciMoves, uciMoves.length > 0 ? 1 : 0);
+      const kind = b.dataset.kind || "line";
+      const tpPly = b.dataset.tpPly ? parseInt(b.dataset.tpPly, 10) : null;
+      const originTp = tpPly !== null ? state.tpByPly[tpPly] : (currentPly() ? state.tpByPly[currentPly().ply] : null);
+      const startStep = b.dataset.step !== undefined ? parseInt(b.dataset.step, 10) : 0;
+      startVariation(b.dataset.label, b.dataset.fen, uciMoves, startStep, kind, originTp);
+      toggleAutoPlay(1100);
     };
   });
+
+  root.querySelectorAll(".btn-var-step").forEach((b) => {
+    b.onclick = () => stepVariation(parseInt(b.dataset.delta, 10));
+  });
+
+  root.querySelectorAll(".btn-var-exit").forEach((b) => {
+    b.onclick = () => exitVariation();
+  });
+
+  const btnResp = root.querySelector("#btnPlayEngineResponse");
+  if (btnResp) {
+    btnResp.onclick = () => {
+      const uciMoves = JSON.parse(btnResp.dataset.uci || "[]");
+      if (uciMoves.length > 0) {
+        const u = uciMoves[0];
+        makeUserMove(u.slice(0, 2), u.slice(2, 4), u[4] || "q");
+      }
+    };
+  }
 }
 
 /* ---------------- Move list & graph ---------------- */
@@ -836,6 +1238,124 @@ function renderQA() {
   sug.querySelectorAll(".chip-q").forEach((c) => (c.onclick = () => askCoach(c.textContent)));
 }
 
+let voiceEnabled = false;
+
+function cleanMarkdownForSpeech(md) {
+  if (!md) return "";
+  return md
+    .replace(/###/g, "")
+    .replace(/\*\*/g, "")
+    .replace(/\*/g, "")
+    .replace(/`([^`]+)`/g, "$1")
+    .replace(/\[.*?\]\(.*?\)/g, "")
+    .replace(/[-+]\d+\.?\d*(?:\s*cp|\s*%)?/g, "")
+    .replace(/\n+/g, ". ")
+    .trim();
+}
+
+function speakExplanation(md) {
+  if (!window.speechSynthesis) return;
+  try {
+    window.speechSynthesis.cancel();
+    const clean = cleanMarkdownForSpeech(md);
+    if (!clean) return;
+    const utter = new SpeechSynthesisUtterance(clean);
+    utter.rate = 1.0;
+    utter.pitch = 1.0;
+    window.speechSynthesis.speak(utter);
+  } catch (err) {
+    console.warn("Speech synthesis error:", err);
+  }
+}
+
+let isListening = false;
+function setupVoiceInput() {
+  const btnMic = document.getElementById("btnMic");
+  if (!btnMic) return;
+  const SpeechRec = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (!SpeechRec) {
+    btnMic.title = "Voice input is not supported in this browser window";
+    btnMic.style.opacity = "0.45";
+    btnMic.onclick = () => {
+      alert("Voice input (SpeechRecognition) is not available in this browser window. You can type in the question box!");
+    };
+    return;
+  }
+
+  const recog = new SpeechRec();
+  recog.continuous = false;
+  recog.interimResults = true;
+  recog.lang = "en-US";
+
+  function stopListening() {
+    isListening = false;
+    btnMic.classList.remove("recording");
+    btnMic.title = "Talk to coach (Click to speak)";
+    document.getElementById("qaInput").placeholder = "e.g. What if I played f4 instead? (or click 🎤 to talk)";
+  }
+
+  recog.onstart = () => {
+    isListening = true;
+    btnMic.classList.add("recording");
+    btnMic.title = "Listening... Speak your chess question!";
+    document.getElementById("qaInput").placeholder = "Listening... speak now!";
+  };
+
+  recog.onresult = (e) => {
+    let transcript = "";
+    for (let i = e.resultIndex; i < e.results.length; ++i) {
+      transcript += e.results[i][0].transcript;
+    }
+    document.getElementById("qaInput").value = transcript;
+    if (e.results[0].isFinal) {
+      stopListening();
+      askCoach(transcript);
+    }
+  };
+
+  recog.onerror = (e) => {
+    console.warn("Speech recognition error:", e.error);
+    stopListening();
+  };
+
+  recog.onend = () => {
+    stopListening();
+  };
+
+  btnMic.onclick = () => {
+    if (isListening) {
+      recog.stop();
+      stopListening();
+    } else {
+      try {
+        recog.start();
+      } catch (err) {
+        console.error("Speech recognition start failed:", err);
+      }
+    }
+  };
+}
+
+function setupVoiceToggle() {
+  const btn = document.getElementById("btnVoiceToggle");
+  if (!btn) return;
+  btn.onclick = () => {
+    voiceEnabled = !voiceEnabled;
+    if (voiceEnabled) {
+      btn.innerHTML = "&#128266;";
+      btn.classList.remove("muted");
+      btn.title = "Voice narration: ON (Click to mute)";
+    } else {
+      btn.innerHTML = "&#128263;";
+      btn.classList.add("muted");
+      btn.title = "Voice narration: OFF (Click to unmute)";
+      if (window.speechSynthesis) {
+        try { window.speechSynthesis.cancel(); } catch (e) {}
+      }
+    }
+  };
+}
+
 async function askCoach(question) {
   if (!question.trim() || !state.game) return;
   const askedAt = state.plyIndex;
@@ -874,6 +1394,16 @@ async function askCoach(question) {
         &#9654; ${esc(l.label)}
       </button>`).join("");
     answerHtml = `<div class="qa-bubble">${renderMarkdown(data.answer_markdown)}${btns ? `<div class="line-btns">${btns}</div>` : ""}</div>`;
+
+    // Automatically demonstrate primary variation line on the board
+    if (data.interactive_lines && data.interactive_lines.length > 0) {
+      const l0 = data.interactive_lines[0];
+      startVariation(l0.label, l0.fen, l0.uci_moves, 0);
+      toggleAutoPlay(1100);
+    }
+    if (voiceEnabled) {
+      speakExplanation(data.answer_markdown);
+    }
   } catch (err) {
     answerHtml = `<div class="qa-bubble">Sorry — ${esc(err.message)}</div>`;
   }
@@ -1006,8 +1536,12 @@ window.addEventListener("DOMContentLoaded", async () => {
   
   $("btnFlip").onclick = () => { state.flipped = !state.flipped; renderBoard(); };
   $("btnVarPrev").onclick = () => stepVariation(-1);
+  if ($("btnVarPlay")) $("btnVarPlay").onclick = () => toggleAutoPlay(1100);
   $("btnVarNext").onclick = () => stepVariation(1);
   $("btnVarExit").onclick = () => exitVariation();
+
+  setupVoiceInput();
+  setupVoiceToggle();
 
   window.addEventListener("keydown", (e) => {
     if (["INPUT", "TEXTAREA", "SELECT"].includes(document.activeElement.tagName)) return;
@@ -1024,6 +1558,9 @@ window.addEventListener("DOMContentLoaded", async () => {
       e.preventDefault();
     } else if (e.key === "End") {
       jumpToPly(state.game ? state.game.plies.length : 0);
+      e.preventDefault();
+    } else if (e.key === " " && state.variation) {
+      toggleAutoPlay(1100);
       e.preventDefault();
     } else if (e.key === "Escape") {
       if (state.variation) {
